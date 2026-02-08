@@ -29,12 +29,15 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import axios from 'axios'
 
 export default {
   name: 'SpecialtyManager',
-  setup() {
+  props: {
+    activeTab: String
+  },
+  setup(props) {
     const specialties = ref([])
     const newSpecialty = ref({
       name: '',
@@ -76,6 +79,10 @@ export default {
         console.error('Error deleting specialty:', error)
       }
     }
+
+    watch(() => props.activeTab, (tab) => {
+      if (tab === 'specialties') loadSpecialties()
+    })
 
     onMounted(() => {
       loadSpecialties()

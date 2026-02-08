@@ -20,16 +20,16 @@
       </button>
     </div>
 
-    <div v-if="activeTab === 'schedule'">
-      <ScheduleGrid />
+    <div v-show="activeTab === 'schedule'">
+      <ScheduleGrid :activeTab="activeTab" />
     </div>
 
-    <div v-if="activeTab === 'specialties'">
-      <SpecialtyManager />
+    <div v-show="activeTab === 'specialties'">
+      <SpecialtyManager :activeTab="activeTab" />
     </div>
 
-    <div v-if="activeTab === 'teams'">
-      <TeamManager />
+    <div v-show="activeTab === 'teams'">
+      <TeamManager :activeTab="activeTab" />
     </div>
   </div>
 </template>

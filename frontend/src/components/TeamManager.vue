@@ -59,12 +59,15 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 
 export default {
   name: 'TeamManager',
-  setup() {
+  props: {
+    activeTab: String
+  },
+  setup(props) {
     const teams = ref([])
     const specialties = ref([])
     const newTeam = ref({
@@ -133,6 +136,13 @@ export default {
       const specialty = specialties.value.find(s => s.id === id)
       return specialty ? specialty.color : '#cccccc'
     }
+
+    watch(() => props.activeTab, (tab) => {
+      if (tab === 'teams') {
+        loadSpecialties()
+        loadTeams()
+      }
+    })
 
     onMounted(() => {
       loadSpecialties()

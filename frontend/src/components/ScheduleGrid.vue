@@ -5,7 +5,34 @@
     <div class="toolbar">
       <button @click="addPatient">Add Patient</button>
       <button @click="saveSchedule">Save Schedule</button>
+      <button @click="openLoadModal">Load Schedule</button>
       <button @click="printSchedule">Print Schedule</button>
+    </div>
+
+    <!-- Load Schedule Modal -->
+    <div v-if="showLoadModal" class="modal-overlay" @click.self="showLoadModal = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Load Schedule</h3>
+          <button @click="showLoadModal = false" class="modal-close">×</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="savedSchedules.length === 0" class="no-schedules">
+            No saved schedules found.
+          </div>
+          <div v-for="s in savedSchedules" :key="s.id" class="saved-schedule-item">
+            <div class="saved-schedule-info">
+              <strong>{{ s.name }}</strong>
+              <span class="saved-schedule-date">{{ new Date(s.created_at).toLocaleString() }}</span>
+              <span class="saved-schedule-detail">{{ s.slots.length }} slots</span>
+            </div>
+            <div class="saved-schedule-actions">
+              <button @click="loadScheduleById(s.id)" class="load-btn">Load</button>
+              <button @click="deleteSavedSchedule(s.id)" class="delete-schedule-btn">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="schedule-wrapper">
@@ -92,12 +119,15 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 
 export default {
   name: 'ScheduleGrid',
-  setup() {
+  props: {
+    activeTab: String
+  },
+  setup(props) {
     const teams = ref([])
     const specialties = ref([])
     const patients = ref([
@@ -114,6 +144,8 @@ export default {
     const schedule = ref({})
     const draggedTeam = ref(null)
     const dragSourceKey = ref(null)
+    const showLoadModal = ref(false)
+    const savedSchedules = ref([])
 
     const loadTeams = async () => {
       try {
@@ -363,13 +395,19 @@ export default {
           id: Date.now().toString(),
           name: `Schedule ${new Date().toLocaleString()}`,
           slots: Object.entries(schedule.value).map(([key, team]) => {
-            const [patientName, timeSlot] = key.split('-')
+            const lastDash = key.lastIndexOf('-')
+            const patientName = key.substring(0, lastDash)
+            const timeSlot = key.substring(lastDash + 1)
             return {
               patient_name: patientName,
               time_slot: timeSlot,
               team_id: team.id
             }
           }),
+          patients: patients.value.map(p => ({
+            name: p.name,
+            arrival_time: p.arrivalTime
+          })),
           created_at: new Date().toISOString()
         }
 
@@ -384,6 +422,79 @@ export default {
     const printSchedule = () => {
       window.print()
     }
+
+    const openLoadModal = async () => {
+      try {
+        const response = await axios.get('/api/schedules')
+        savedSchedules.value = response.data
+      } catch (error) {
+        console.error('Error loading saved schedules:', error)
+      }
+      showLoadModal.value = true
+    }
+
+    const loadScheduleById = async (id) => {
+      try {
+        const response = await axios.get(`/api/schedules/${id}`)
+        const saved = response.data
+
+        // Restore patients
+        if (saved.patients && saved.patients.length > 0) {
+          patients.value = saved.patients.map(p => ({
+            name: p.name,
+            arrivalTime: p.arrival_time
+          }))
+        } else {
+          // Backward compat: extract patient names from slots
+          const names = [...new Set(saved.slots.map(s => s.patient_name))]
+          patients.value = names.map(name => ({ name, arrivalTime: '8:00' }))
+        }
+
+        // Reconstruct schedule object
+        const newSchedule = {}
+        for (const slot of saved.slots) {
+          const team = teams.value.find(t => t.id === slot.team_id)
+          if (!team) continue
+
+          const key = `${slot.patient_name}-${slot.time_slot}`
+
+          if (team.duration === 60) {
+            const nextSlot = getNextTimeSlot(slot.time_slot)
+            if (nextSlot) {
+              // Only add if this is not already a continuation slot
+              if (!newSchedule[key]?.spanContinuation) {
+                newSchedule[key] = { ...team, spanStart: true, spanNextSlot: nextSlot }
+                newSchedule[`${slot.patient_name}-${nextSlot}`] = { ...team, spanContinuation: true, spanStartSlot: slot.time_slot }
+              }
+            }
+          } else {
+            newSchedule[key] = { ...team }
+          }
+        }
+        schedule.value = newSchedule
+
+        showLoadModal.value = false
+      } catch (error) {
+        console.error('Error loading schedule:', error)
+        alert('Error loading schedule')
+      }
+    }
+
+    const deleteSavedSchedule = async (id) => {
+      try {
+        await axios.delete(`/api/schedules/${id}`)
+        savedSchedules.value = savedSchedules.value.filter(s => s.id !== id)
+      } catch (error) {
+        console.error('Error deleting schedule:', error)
+      }
+    }
+
+    watch(() => props.activeTab, (tab) => {
+      if (tab === 'schedule') {
+        loadTeams()
+        loadSpecialties()
+      }
+    })
 
     onMounted(() => {
       loadTeams()
@@ -410,7 +521,12 @@ export default {
       getSpecialtyColor,
       getTeamStyle,
       saveSchedule,
-      printSchedule
+      printSchedule,
+      showLoadModal,
+      savedSchedules,
+      openLoadModal,
+      loadScheduleById,
+      deleteSavedSchedule
     }
   }
 }
@@ -592,6 +708,120 @@ export default {
 }
 
 
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: white;
+  border-radius: 8px;
+  width: 500px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  border-bottom: 1px solid #ddd;
+}
+
+.modal-header h3 {
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #666;
+  padding: 0;
+  line-height: 1;
+}
+
+.modal-body {
+  padding: 15px 20px;
+  overflow-y: auto;
+}
+
+.no-schedules {
+  text-align: center;
+  color: #999;
+  padding: 20px;
+}
+
+.saved-schedule-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.saved-schedule-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.saved-schedule-date {
+  font-size: 12px;
+  color: #666;
+}
+
+.saved-schedule-detail {
+  font-size: 11px;
+  color: #999;
+}
+
+.saved-schedule-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.load-btn {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.load-btn:hover {
+  background: #45a049;
+}
+
+.delete-schedule-btn {
+  background: #ff4444;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.delete-schedule-btn:hover {
+  background: #cc0000;
+}
+
 @media print {
   .toolbar,
   .team-palette {
@@ -604,6 +834,15 @@ export default {
 
   .schedule-grid-container {
     overflow: visible;
+  }
+
+  .scheduled-team,
+  .schedule-grid th,
+  .patient-cell,
+  .before-arrival,
+  .double-booked-cell {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 }
 </style>

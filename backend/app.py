@@ -39,10 +39,15 @@ class ScheduleSlot(BaseModel):
     time_slot: str
     team_id: str
 
+class Patient(BaseModel):
+    name: str
+    arrival_time: str
+
 class Schedule(BaseModel):
     id: str
     name: str
     slots: List[ScheduleSlot]
+    patients: Optional[List[Patient]] = None
     created_at: str
 
 # Helper functions for JSON storage
