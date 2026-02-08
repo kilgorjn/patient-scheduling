@@ -6,6 +6,7 @@
       <button @click="addPatient">Add Patient</button>
       <button @click="saveSchedule">Save Schedule</button>
       <button @click="openLoadModal">Load Schedule</button>
+      <button @click="autoSchedule">Auto Schedule</button>
       <button @click="printSchedule">Print Schedule</button>
     </div>
 
@@ -51,7 +52,13 @@
                 class="team-content"
                 draggable="true"
                 @dragstart="onDragStart($event, team)">
-                <strong>{{ team.name }}</strong>
+                <div class="team-name-row">
+                  <strong>{{ team.name }}</strong>
+                  <span
+                    class="palette-auto-indicator"
+                    :class="{ 'auto-off': team.auto_schedule === false }"
+                    title="Auto-schedule">&#x2699;</span>
+                </div>
                 <div class="team-specialties-mini">
                   <span
                     v-for="specialtyId in team.specialty_ids"
@@ -453,6 +460,213 @@ export default {
       return { backgroundColor: firstColor }
     }
 
+    const autoSchedule = () => {
+      const newSchedule = {}
+      // Step 1: Keep pinned slots
+      for (const [key, entry] of Object.entries(schedule.value)) {
+        if (entry.pinned) {
+          newSchedule[key] = entry
+        }
+      }
+
+      const autoTeams = teams.value.filter(t => t.auto_schedule !== false)
+      const teams60 = autoTeams.filter(t => t.duration === 60)
+      const teams30 = autoTeams.filter(t => t.duration !== 60)
+
+      // Helper: check if a team is busy at a given time slot
+      const isTeamBusyAt = (teamId, timeSlot) => {
+        return Object.entries(newSchedule).some(([key, entry]) => {
+          return key.substring(key.lastIndexOf('-') + 1) === timeSlot && entry.id === teamId
+        })
+      }
+
+      // Helper: has patient already seen this team?
+      const hasPatientSeenTeam = (patientName, teamId) => {
+        return Object.entries(newSchedule).some(([key, entry]) => {
+          return key.substring(0, key.lastIndexOf('-')) === patientName &&
+            entry.id === teamId && !entry.spanContinuation
+        })
+      }
+
+      // Step 2: Place 60-min teams first (hardest to fit, cause gaps if placed late)
+      for (const team of teams60) {
+        for (const timeSlot of timeSlots.value) {
+          if (isTeamBusyAt(team.id, timeSlot)) continue
+          const nextSlot = getNextTimeSlot(timeSlot)
+          if (!nextSlot) continue
+          if (isTeamBusyAt(team.id, nextSlot)) continue
+
+          // Find best patient for this slot
+          let bestPatient = null
+          let bestIdx = Infinity
+          for (let idx = 0; idx < patients.value.length; idx++) {
+            const p = patients.value[idx]
+            if (hasPatientSeenTeam(p.name, team.id)) continue
+            if (isBeforeArrival(p, timeSlot)) continue
+            if (newSchedule[`${p.name}-${timeSlot}`]) continue
+            if (newSchedule[`${p.name}-${nextSlot}`]) continue
+            if (idx < bestIdx) {
+              bestPatient = p
+              bestIdx = idx
+            }
+          }
+
+          if (bestPatient) {
+            const key = `${bestPatient.name}-${timeSlot}`
+            newSchedule[key] = { ...team, spanStart: true, spanNextSlot: nextSlot, pinned: false }
+            newSchedule[`${bestPatient.name}-${nextSlot}`] = { ...team, spanContinuation: true, spanStartSlot: timeSlot, pinned: false }
+          }
+        }
+      }
+
+      // Step 3: Fill empty slots per-patient with 30-min teams (gap-filling approach)
+      // Scan each patient's timeline left-to-right, filling gaps with highest-priority available team
+      for (const patient of patients.value) {
+        const arrivalIdx = timeSlots.value.indexOf(patient.arrivalTime || timeSlots.value[0])
+
+        for (let i = arrivalIdx; i < timeSlots.value.length; i++) {
+          const timeSlot = timeSlots.value[i]
+          const key = `${patient.name}-${timeSlot}`
+          if (newSchedule[key]) continue // already filled
+
+          // Find highest-priority 30-min team that can go here
+          for (const team of teams30) {
+            if (hasPatientSeenTeam(patient.name, team.id)) continue
+            if (isTeamBusyAt(team.id, timeSlot)) continue
+
+            newSchedule[key] = { ...team, pinned: false }
+            break
+          }
+        }
+      }
+
+      // Step 4: Split multi-specialty teams to fill remaining gaps
+      const splittableTeams = autoTeams.filter(t => t.specialty_ids.length >= 2)
+
+      // Helper: check if a specialty is busy at a given time slot
+      const isSpecialtyBusyAt = (specialtyId, timeSlot) => {
+        return Object.entries(newSchedule).some(([key, entry]) => {
+          if (key.substring(key.lastIndexOf('-') + 1) !== timeSlot) return false
+          return entry.specialty_ids && entry.specialty_ids.includes(specialtyId)
+        })
+      }
+
+      // Helper: has patient already seen this specialty (via any team or split)?
+      const hasPatientSeenSpecialty = (patientName, specialtyId) => {
+        return Object.entries(newSchedule).some(([key, entry]) => {
+          if (key.substring(0, key.lastIndexOf('-')) !== patientName) return false
+          if (entry.spanContinuation) return false
+          return entry.specialty_ids && entry.specialty_ids.includes(specialtyId)
+        })
+      }
+
+      // Helper: get gap slots for a patient
+      const getGaps = (patientName, arrivalTime) => {
+        const arrivalIdx = timeSlots.value.indexOf(arrivalTime || timeSlots.value[0])
+        const gaps = []
+        for (let i = arrivalIdx; i < timeSlots.value.length; i++) {
+          if (!newSchedule[`${patientName}-${timeSlots.value[i]}`]) {
+            gaps.push(timeSlots.value[i])
+          }
+        }
+        return gaps
+      }
+
+      // Helper: create a split entry
+      const makeSplitEntry = (team, specialtyId) => {
+        const specialty = specialties.value.find(s => s.id === specialtyId)
+        return {
+          id: `split_${team.id}_${specialtyId}`,
+          name: specialty ? specialty.name : 'Unknown',
+          specialty_ids: [specialtyId],
+          duration: 30,
+          pinned: false,
+          isSplit: true,
+          originalTeamId: team.id,
+          originalTeamName: team.name,
+          splitSpecialtyId: specialtyId
+        }
+      }
+
+      for (const patient of patients.value) {
+        let gaps = getGaps(patient.name, patient.arrivalTime)
+        if (gaps.length === 0) continue
+
+        // Strategy A: Split teams already scheduled for this patient
+        for (const team of splittableTeams) {
+          gaps = getGaps(patient.name, patient.arrivalTime)
+          if (gaps.length === 0) break
+
+          // Find where this team is currently scheduled for this patient
+          let currentSlot = null
+          for (const ts of timeSlots.value) {
+            const entry = newSchedule[`${patient.name}-${ts}`]
+            if (entry && entry.id === team.id && !entry.spanContinuation) {
+              currentSlot = ts
+              break
+            }
+          }
+          if (!currentSlot) continue
+
+          // Count how many specialties can be placed in gaps (not counting the original slot)
+          let gapFillCount = 0
+          for (const sid of team.specialty_ids) {
+            for (const gapSlot of gaps) {
+              if (!isSpecialtyBusyAt(sid, gapSlot)) {
+                gapFillCount++
+                break
+              }
+            }
+          }
+
+          // Only split if we gain at least 1 extra slot over the combined visit
+          const currentSlotCount = team.duration === 60 ? 2 : 1
+          if (gapFillCount <= currentSlotCount) continue
+
+          // Remove combined entry
+          const currentEntry = newSchedule[`${patient.name}-${currentSlot}`]
+          delete newSchedule[`${patient.name}-${currentSlot}`]
+          if (currentEntry.spanStart && currentEntry.spanNextSlot) {
+            delete newSchedule[`${patient.name}-${currentEntry.spanNextSlot}`]
+          }
+
+          // Place each specialty individually
+          for (const sid of team.specialty_ids) {
+            if (hasPatientSeenSpecialty(patient.name, sid)) continue
+            const candidateSlots = [currentSlot, ...gaps.filter(g => g !== currentSlot)]
+            for (const slot of candidateSlots) {
+              const key = `${patient.name}-${slot}`
+              if (newSchedule[key]) continue
+              if (isSpecialtyBusyAt(sid, slot)) continue
+              newSchedule[key] = makeSplitEntry(team, sid)
+              break
+            }
+          }
+        }
+
+        // Strategy B: Try splitting teams NOT yet scheduled for this patient
+        gaps = getGaps(patient.name, patient.arrivalTime)
+        if (gaps.length === 0) continue
+
+        for (const team of splittableTeams) {
+          if (hasPatientSeenTeam(patient.name, team.id)) continue
+          // Check if at least one specialty from this team can fill a gap
+          for (const sid of team.specialty_ids) {
+            if (hasPatientSeenSpecialty(patient.name, sid)) continue
+            const currentGaps = getGaps(patient.name, patient.arrivalTime)
+            for (const gapSlot of currentGaps) {
+              if (isSpecialtyBusyAt(sid, gapSlot)) continue
+              newSchedule[`${patient.name}-${gapSlot}`] = makeSplitEntry(team, sid)
+              break
+            }
+          }
+        }
+      }
+
+      schedule.value = newSchedule
+      console.log('Auto Schedule result:', JSON.stringify(newSchedule, null, 2))
+    }
+
     const saveSchedule = async () => {
       try {
         const scheduleData = {
@@ -466,7 +680,10 @@ export default {
               patient_name: patientName,
               time_slot: timeSlot,
               team_id: team.id,
-              pinned: !!team.pinned
+              pinned: !!team.pinned,
+              is_split: !!team.isSplit,
+              original_team_id: team.originalTeamId || null,
+              split_specialty_id: team.splitSpecialtyId || null
             }
           }),
           patients: patients.value.map(p => ({
@@ -528,12 +745,29 @@ export default {
         // Reconstruct schedule object
         const newSchedule = {}
         for (const slot of saved.slots) {
+          const key = `${slot.patient_name}-${slot.time_slot}`
+          const pinned = !!slot.pinned
+
+          // Reconstruct split entries from specialty data
+          if (slot.is_split && slot.split_specialty_id) {
+            const specialty = specialties.value.find(s => s.id === slot.split_specialty_id)
+            const originalTeam = teams.value.find(t => t.id === slot.original_team_id)
+            newSchedule[key] = {
+              id: slot.team_id,
+              name: specialty ? specialty.name : 'Unknown',
+              specialty_ids: [slot.split_specialty_id],
+              duration: 30,
+              pinned,
+              isSplit: true,
+              originalTeamId: slot.original_team_id,
+              originalTeamName: originalTeam ? originalTeam.name : 'Unknown',
+              splitSpecialtyId: slot.split_specialty_id
+            }
+            continue
+          }
+
           const team = teams.value.find(t => t.id === slot.team_id)
           if (!team) continue
-
-          const key = `${slot.patient_name}-${slot.time_slot}`
-
-          const pinned = !!slot.pinned
 
           if (team.duration === 60) {
             const nextSlot = getNextTimeSlot(slot.time_slot)
@@ -585,6 +819,7 @@ export default {
       timeSlots,
       schedule,
       addPatient,
+      autoSchedule,
       isBeforeArrival,
       onDragOver,
       getNextTimeSlot,
@@ -677,6 +912,27 @@ export default {
 .team-content {
   flex: 1;
   cursor: move;
+}
+
+.team-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 5px;
+}
+
+.team-name-row strong {
+  font-size: 14px;
+}
+
+.palette-auto-indicator {
+  font-size: 11px;
+  color: #4CAF50;
+  flex-shrink: 0;
+}
+
+.palette-auto-indicator.auto-off {
+  color: #ccc;
 }
 
 .team-content strong {

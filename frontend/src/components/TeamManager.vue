@@ -52,6 +52,12 @@
           <div class="team-details">
             <div class="team-header">
               <h3>{{ team.name }}</h3>
+              <button
+                @click="toggleAutoSchedule(team)"
+                class="auto-schedule-btn"
+                :title="team.auto_schedule !== false ? 'Disable auto-schedule' : 'Enable auto-schedule'">
+                <span :class="team.auto_schedule !== false ? 'auto-on' : 'auto-off'">&#x2699;</span>
+              </button>
               <button @click="deleteTeam(team.id)" class="delete-btn">×</button>
             </div>
             <div class="team-specialties">
@@ -133,6 +139,16 @@ export default {
       }
     }
 
+    const toggleAutoSchedule = async (team) => {
+      try {
+        const updated = { ...team, auto_schedule: team.auto_schedule === false ? true : false }
+        await axios.put(`/api/teams/${team.id}`, updated)
+        await loadTeams()
+      } catch (error) {
+        console.error('Error updating team:', error)
+      }
+    }
+
     const deleteTeam = async (id) => {
       try {
         await axios.delete(`/api/teams/${id}`)
@@ -180,6 +196,7 @@ export default {
       newTeam,
       canAddTeam,
       addTeam,
+      toggleAutoSchedule,
       deleteTeam,
       onDragEnd,
       getSpecialtyName,
@@ -338,6 +355,35 @@ export default {
 .team-duration {
   font-size: 12px;
   color: #666;
+}
+
+.auto-schedule-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+.auto-schedule-btn .auto-on {
+  color: #4CAF50;
+}
+
+.auto-schedule-btn .auto-off {
+  color: #ccc;
+  position: relative;
+}
+
+.auto-schedule-btn .auto-off::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -1px;
+  right: -1px;
+  height: 2px;
+  background: #999;
+  transform: rotate(-45deg);
 }
 
 .delete-btn {

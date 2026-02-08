@@ -34,6 +34,7 @@ class Team(BaseModel):
     specialty_ids: List[str]
     duration: int = 30  # minutes
     priority: int = 0
+    auto_schedule: bool = True
 
 class TeamReorderItem(BaseModel):
     id: str
@@ -44,6 +45,9 @@ class ScheduleSlot(BaseModel):
     time_slot: str
     team_id: str
     pinned: bool = False
+    is_split: bool = False
+    original_team_id: Optional[str] = None
+    split_specialty_id: Optional[str] = None
 
 class Patient(BaseModel):
     name: str
@@ -119,6 +123,18 @@ async def reorder_teams(items: List[TeamReorderItem]):
             team["priority"] = priority_map[team["id"]]
     save_data("teams.json", teams)
     return {"message": "Teams reordered"}
+
+@app.put("/api/teams/{team_id}", response_model=Team)
+async def update_team(team_id: str, team: Team):
+    teams = load_data("teams.json")
+    for i, t in enumerate(teams):
+        if t["id"] == team_id:
+            updated = team.dict()
+            updated["id"] = team_id
+            teams[i] = updated
+            save_data("teams.json", teams)
+            return Team(**updated)
+    raise HTTPException(status_code=404, detail="Team not found")
 
 @app.delete("/api/teams/{team_id}")
 async def delete_team(team_id: str):
