@@ -37,33 +37,48 @@
       <button @click="addTeam" :disabled="!canAddTeam">Add Team</button>
     </div>
 
-    <div class="team-list">
-      <div v-for="team in teams" :key="team.id" class="team-item">
-        <div class="team-header">
-          <h3>{{ team.name }}</h3>
-          <button @click="deleteTeam(team.id)" class="delete-btn">×</button>
+    <draggable
+      v-model="teams"
+      item-key="id"
+      handle=".drag-handle"
+      class="team-list"
+      @end="onDragEnd">
+      <template #item="{ element: team, index }">
+        <div class="team-item">
+          <div class="drag-handle" title="Drag to reorder">
+            <span class="priority-number">{{ index + 1 }}</span>
+            <span class="drag-icon">&#x2630;</span>
+          </div>
+          <div class="team-details">
+            <div class="team-header">
+              <h3>{{ team.name }}</h3>
+              <button @click="deleteTeam(team.id)" class="delete-btn">×</button>
+            </div>
+            <div class="team-specialties">
+              <span
+                v-for="specialtyId in team.specialty_ids"
+                :key="specialtyId"
+                class="specialty-badge"
+                :style="{ backgroundColor: getSpecialtyColor(specialtyId) }">
+                {{ getSpecialtyName(specialtyId) }}
+              </span>
+            </div>
+            <div class="team-duration">Duration: {{ team.duration }} minutes</div>
+          </div>
         </div>
-        <div class="team-specialties">
-          <span
-            v-for="specialtyId in team.specialty_ids"
-            :key="specialtyId"
-            class="specialty-badge"
-            :style="{ backgroundColor: getSpecialtyColor(specialtyId) }">
-            {{ getSpecialtyName(specialtyId) }}
-          </span>
-        </div>
-        <div class="team-duration">Duration: {{ team.duration }} minutes</div>
-      </div>
-    </div>
+      </template>
+    </draggable>
   </div>
 </template>
 
 <script>
 import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
+import draggable from 'vuedraggable'
 
 export default {
   name: 'TeamManager',
+  components: { draggable },
   props: {
     activeTab: String
   },
@@ -137,6 +152,16 @@ export default {
       return specialty ? specialty.color : '#cccccc'
     }
 
+    const onDragEnd = async () => {
+      const reorderData = teams.value.map((t, i) => ({ id: t.id, priority: i }))
+      try {
+        await axios.put('/api/teams/reorder', reorderData)
+      } catch (error) {
+        console.error('Error reordering teams:', error)
+        await loadTeams()
+      }
+    }
+
     watch(() => props.activeTab, (tab) => {
       if (tab === 'teams') {
         loadSpecialties()
@@ -156,6 +181,7 @@ export default {
       canAddTeam,
       addTeam,
       deleteTeam,
+      onDragEnd,
       getSpecialtyName,
       getSpecialtyColor
     }
@@ -222,16 +248,63 @@ export default {
 }
 
 .team-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 600px;
 }
 
 .team-item {
   border: 1px solid #ddd;
   border-radius: 8px;
-  padding: 15px;
+  padding: 12px 15px;
   background: white;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.drag-handle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  cursor: grab;
+  padding: 4px 8px;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.drag-handle:hover {
+  background: #f0f0f0;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.priority-number {
+  font-weight: bold;
+  font-size: 14px;
+  color: #666;
+  min-width: 20px;
+  text-align: center;
+}
+
+.drag-icon {
+  font-size: 16px;
+  color: #999;
+  line-height: 1;
+}
+
+.sortable-ghost {
+  opacity: 0.4;
+  background: #e8f5e9;
+}
+
+.team-details {
+  flex: 1;
 }
 
 .team-header {

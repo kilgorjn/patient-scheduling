@@ -33,11 +33,17 @@ class Team(BaseModel):
     name: str
     specialty_ids: List[str]
     duration: int = 30  # minutes
+    priority: int = 0
+
+class TeamReorderItem(BaseModel):
+    id: str
+    priority: int
 
 class ScheduleSlot(BaseModel):
     patient_name: str
     time_slot: str
     team_id: str
+    pinned: bool = False
 
 class Patient(BaseModel):
     name: str
@@ -91,14 +97,28 @@ async def delete_specialty(specialty_id: str):
 # Teams endpoints
 @app.get("/api/teams", response_model=List[Team])
 async def get_teams():
-    return load_data("teams.json")
+    teams = load_data("teams.json")
+    return sorted(teams, key=lambda t: t.get("priority", 0))
 
 @app.post("/api/teams", response_model=Team)
 async def create_team(team: Team):
     teams = load_data("teams.json")
-    teams.append(team.dict())
+    max_priority = max((t.get("priority", 0) for t in teams), default=-1)
+    team_dict = team.dict()
+    team_dict["priority"] = max_priority + 1
+    teams.append(team_dict)
     save_data("teams.json", teams)
-    return team
+    return Team(**team_dict)
+
+@app.put("/api/teams/reorder")
+async def reorder_teams(items: List[TeamReorderItem]):
+    teams = load_data("teams.json")
+    priority_map = {item.id: item.priority for item in items}
+    for team in teams:
+        if team["id"] in priority_map:
+            team["priority"] = priority_map[team["id"]]
+    save_data("teams.json", teams)
+    return {"message": "Teams reordered"}
 
 @app.delete("/api/teams/{team_id}")
 async def delete_team(team_id: str):

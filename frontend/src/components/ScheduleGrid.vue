@@ -39,24 +39,31 @@
       <!-- Team palette -->
       <div class="team-palette">
         <h3>Teams</h3>
-        <div
-          v-for="team in teams"
-          :key="team.id"
-          class="team-block"
-          draggable="true"
-          @dragstart="onDragStart($event, team)">
-          <div class="team-content">
-            <strong>{{ team.name }}</strong>
-            <div class="team-specialties-mini">
-              <span
-                v-for="specialtyId in team.specialty_ids"
-                :key="specialtyId"
-                class="specialty-dot"
-                :style="{ backgroundColor: getSpecialtyColor(specialtyId) }">
-              </span>
+        <draggable
+          v-model="teams"
+          item-key="id"
+          handle=".palette-reorder-handle"
+          @end="onPaletteReorder">
+          <template #item="{ element: team }">
+            <div class="team-block">
+              <span class="palette-reorder-handle" title="Drag to reorder">&#x2630;</span>
+              <div
+                class="team-content"
+                draggable="true"
+                @dragstart="onDragStart($event, team)">
+                <strong>{{ team.name }}</strong>
+                <div class="team-specialties-mini">
+                  <span
+                    v-for="specialtyId in team.specialty_ids"
+                    :key="specialtyId"
+                    class="specialty-dot"
+                    :style="{ backgroundColor: getSpecialtyColor(specialtyId) }">
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          </template>
+        </draggable>
       </div>
 
       <!-- Schedule grid -->
@@ -101,12 +108,19 @@
                   :class="{
                     'double-booked-team': isDoubleBooked(patient.name, timeSlot),
                     'duplicate-team': isDuplicateTeam(patient.name, timeSlot),
-                    'span-continuation': getTeamForSlot(patient.name, timeSlot)?.spanContinuation
+                    'span-continuation': getTeamForSlot(patient.name, timeSlot)?.spanContinuation,
+                    'pinned-team': getTeamForSlot(patient.name, timeSlot)?.pinned
                   }"
                   :style="getTeamStyle(getTeamForSlot(patient.name, timeSlot))"
-                  draggable="true"
+                  :draggable="!getTeamForSlot(patient.name, timeSlot)?.pinned"
                   @dragstart="onGridDragStart($event, patient.name, timeSlot)"
                   @dblclick="removeTeam(patient.name, timeSlot)">
+                  <span
+                    v-if="!getTeamForSlot(patient.name, timeSlot)?.spanContinuation"
+                    class="pin-btn"
+                    :class="{ 'is-pinned': getTeamForSlot(patient.name, timeSlot)?.pinned }"
+                    @click.stop="togglePin(patient.name, timeSlot)"
+                    :title="getTeamForSlot(patient.name, timeSlot)?.pinned ? 'Unpin' : 'Pin'">&#x1F4CC;</span>
                   {{ getTeamForSlot(patient.name, timeSlot)?.spanContinuation ? '' : getTeamForSlot(patient.name, timeSlot).name }}
                 </div>
               </td>
@@ -121,9 +135,11 @@
 <script>
 import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
+import draggable from 'vuedraggable'
 
 export default {
   name: 'ScheduleGrid',
+  components: { draggable },
   props: {
     activeTab: String
   },
@@ -200,6 +216,19 @@ export default {
       const key = `${patientName}-${timeSlot}`
       const entry = schedule.value[key]
 
+      // Block drag on pinned teams
+      if (entry && entry.pinned) {
+        event.preventDefault()
+        return
+      }
+      if (entry && entry.spanContinuation) {
+        const startEntry = schedule.value[`${patientName}-${entry.spanStartSlot}`]
+        if (startEntry && startEntry.pinned) {
+          event.preventDefault()
+          return
+        }
+      }
+
       // If dragging a continuation cell, find the start cell instead
       if (entry && entry.spanContinuation) {
         draggedTeam.value = { ...entry, spanContinuation: undefined, spanStart: undefined }
@@ -229,6 +258,14 @@ export default {
 
       // Block drops on before-arrival cells
       if (patient && isBeforeArrival(patient, timeSlot)) {
+        draggedTeam.value = null
+        dragSourceKey.value = null
+        return
+      }
+
+      // Block drops onto pinned teams
+      const existingEntry = schedule.value[`${patientName}-${timeSlot}`]
+      if (existingEntry && existingEntry.pinned) {
         draggedTeam.value = null
         dragSourceKey.value = null
         return
@@ -273,14 +310,41 @@ export default {
       const key = `${patientName}-${timeSlot}`
       const entry = schedule.value[key]
       if (!entry) return
+      if (entry.pinned) return
+      if (entry.spanContinuation) {
+        const startEntry = schedule.value[`${patientName}-${entry.spanStartSlot}`]
+        if (startEntry && startEntry.pinned) return
+      }
 
       if (entry.spanContinuation) {
-        // Clicked on continuation - remove the start cell too
         const startKey = `${patientName}-${entry.spanStartSlot}`
         delete schedule.value[startKey]
         delete schedule.value[key]
       } else {
         clearTeamSlots(key)
+      }
+    }
+
+    const togglePin = (patientName, timeSlot) => {
+      const key = `${patientName}-${timeSlot}`
+      const entry = schedule.value[key]
+      if (!entry) return
+
+      const newPinned = !entry.pinned
+      entry.pinned = newPinned
+
+      // Also pin/unpin the span partner for 60-min teams
+      if (entry.spanStart) {
+        const contKey = `${patientName}-${entry.spanNextSlot}`
+        if (schedule.value[contKey]) {
+          schedule.value[contKey].pinned = newPinned
+        }
+      }
+      if (entry.spanContinuation) {
+        const startKey = `${patientName}-${entry.spanStartSlot}`
+        if (schedule.value[startKey]) {
+          schedule.value[startKey].pinned = newPinned
+        }
       }
     }
 
@@ -401,7 +465,8 @@ export default {
             return {
               patient_name: patientName,
               time_slot: timeSlot,
-              team_id: team.id
+              team_id: team.id,
+              pinned: !!team.pinned
             }
           }),
           patients: patients.value.map(p => ({
@@ -421,6 +486,16 @@ export default {
 
     const printSchedule = () => {
       window.print()
+    }
+
+    const onPaletteReorder = async () => {
+      const reorderData = teams.value.map((t, i) => ({ id: t.id, priority: i }))
+      try {
+        await axios.put('/api/teams/reorder', reorderData)
+      } catch (error) {
+        console.error('Error reordering teams:', error)
+        await loadTeams()
+      }
     }
 
     const openLoadModal = async () => {
@@ -458,17 +533,19 @@ export default {
 
           const key = `${slot.patient_name}-${slot.time_slot}`
 
+          const pinned = !!slot.pinned
+
           if (team.duration === 60) {
             const nextSlot = getNextTimeSlot(slot.time_slot)
             if (nextSlot) {
               // Only add if this is not already a continuation slot
               if (!newSchedule[key]?.spanContinuation) {
-                newSchedule[key] = { ...team, spanStart: true, spanNextSlot: nextSlot }
-                newSchedule[`${slot.patient_name}-${nextSlot}`] = { ...team, spanContinuation: true, spanStartSlot: slot.time_slot }
+                newSchedule[key] = { ...team, spanStart: true, spanNextSlot: nextSlot, pinned }
+                newSchedule[`${slot.patient_name}-${nextSlot}`] = { ...team, spanContinuation: true, spanStartSlot: slot.time_slot, pinned }
               }
             }
           } else {
-            newSchedule[key] = { ...team }
+            newSchedule[key] = { ...team, pinned }
           }
         }
         schedule.value = newSchedule
@@ -516,12 +593,14 @@ export default {
       onDrop,
       getTeamForSlot,
       removeTeam,
+      togglePin,
       isDoubleBooked,
       isDuplicateTeam,
       getSpecialtyColor,
       getTeamStyle,
       saveSchedule,
       printSchedule,
+      onPaletteReorder,
       showLoadModal,
       savedSchedules,
       openLoadModal,
@@ -564,9 +643,11 @@ export default {
   background: white;
   border: 2px solid #ddd;
   border-radius: 6px;
-  padding: 10px;
+  padding: 8px 10px;
   margin-bottom: 10px;
-  cursor: move;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   transition: all 0.2s;
 }
 
@@ -574,6 +655,28 @@ export default {
   border-color: #4CAF50;
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.palette-reorder-handle {
+  cursor: grab;
+  color: #999;
+  font-size: 14px;
+  flex-shrink: 0;
+  user-select: none;
+  padding: 2px;
+}
+
+.palette-reorder-handle:hover {
+  color: #666;
+}
+
+.palette-reorder-handle:active {
+  cursor: grabbing;
+}
+
+.team-content {
+  flex: 1;
+  cursor: move;
 }
 
 .team-content strong {
@@ -705,6 +808,35 @@ export default {
 .duplicate-team {
   outline: 3px solid orange;
   outline-offset: -2px;
+}
+
+.scheduled-team {
+  position: relative;
+}
+
+.pin-btn {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0.3;
+  line-height: 1;
+  z-index: 1;
+}
+
+.pin-btn:hover {
+  opacity: 0.7;
+}
+
+.pin-btn.is-pinned {
+  opacity: 1;
+}
+
+.pinned-team {
+  outline: 2px dashed rgba(255,255,255,0.7);
+  outline-offset: -3px;
+  cursor: default;
 }
 
 
