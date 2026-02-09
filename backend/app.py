@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import json
 from pathlib import Path
+from solver import SolveRequest, SolveResponse, solve_schedule
 
 app = FastAPI(title="Patient Scheduling API")
 
@@ -169,6 +170,16 @@ async def delete_schedule(schedule_id: str):
     schedules = [s for s in schedules if s["id"] != schedule_id]
     save_data("schedules.json", schedules)
     return {"message": "Schedule deleted"}
+
+# Solver endpoint
+@app.post("/api/solve", response_model=SolveResponse)
+async def solve(request: SolveRequest):
+    try:
+        return solve_schedule(request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Solver error: {str(e)}")
 
 # Serve Vue static files (for production)
 # Mount this after API routes to avoid conflicts
