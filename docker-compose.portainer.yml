@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  app:
+    # Pull pre-built image from GitHub Container Registry
+    # Replace <your-username> with your GitHub username
+    image: ghcr.io/kilgorjn/patient-scheduling:latest
+
+    ports:
+      # HOST_PORT:CONTAINER_PORT - Change 8081 to any available port
+      - "8081:8080"
+
+    volumes:
+      # Persist schedule data between container restarts
+      - patient-scheduling-data:/app/data
+
+    environment:
+      - PYTHONUNBUFFERED=1
+
+    restart: unless-stopped
+
+    # Health check to monitor application status
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  # Named volume for persistent data storage
+  patient-scheduling-data:

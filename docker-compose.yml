@@ -2,11 +2,21 @@ version: '3.8'
 
 services:
   app:
+    # Build from source for local development
     build: .
+
     ports:
       - "8080:8080"
+
     volumes:
-      - ./backend/data:/app/data
+      # Persist schedule data between container restarts
+      - patient-scheduling-data:/app/data
+
     environment:
       - PYTHONUNBUFFERED=1
+
     restart: unless-stopped
+
+volumes:
+  # Named volume for persistent data storage
+  patient-scheduling-data:
