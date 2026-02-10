@@ -72,7 +72,8 @@
 
       <!-- Schedule grid -->
       <div class="schedule-grid-container">
-        <table class="schedule-grid">
+        <div class="schedule-grid-scroll-wrapper">
+          <table class="schedule-grid">
           <thead>
             <tr>
               <th class="patient-header">Patient</th>
@@ -148,6 +149,7 @@
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </div>
@@ -172,14 +174,73 @@ export default {
         arrivalTime: '8:00'
       }))
     )
-    const timeSlots = ref([
-      '8:00', '8:15', '8:30', '8:45',
-      '9:00', '9:15', '9:30', '9:45',
-      '10:00', '10:15', '10:30', '10:45',
-      '11:00', '11:15', '11:30', '11:45',
-      '12:00', '12:15', '12:30', '12:45',
-      '13:00', '13:15', '13:30', '13:45',
-    ])
+
+    // Time slot configuration
+    const BASE_START_TIME = '8:00'
+    const BASE_END_TIME = '13:45'
+    const MAX_END_TIME = '17:00'
+
+    // Time utility functions
+    const timeToMinutes = (timeStr) => {
+      const [h, m] = timeStr.split(':').map(Number)
+      return h * 60 + m
+    }
+
+    const minutesToTime = (minutes) => {
+      const h = Math.floor(minutes / 60)
+      const m = minutes % 60
+      return `${h}:${String(m).padStart(2, '0')}`
+    }
+
+    const generateTimeSlots = (startTime, endTime) => {
+      const slots = []
+      const startMin = timeToMinutes(startTime)
+      const endMin = timeToMinutes(endTime)
+
+      for (let min = startMin; min <= endMin; min += 15) {
+        slots.push(minutesToTime(min))
+      }
+      return slots
+    }
+
+    const extendTimeSlots = (newEndTime) => {
+      timeSlots.value = generateTimeSlots(BASE_START_TIME, newEndTime)
+    }
+
+    const detectRequiredTimeRange = (slots) => {
+      if (!slots || slots.length === 0) return null
+
+      let maxEndIdx = -1
+
+      for (const slot of slots) {
+        const spec = specialties.value.find(s => s.id === slot.specialty_id)
+        const numSlots = spec ? Math.max(1, Math.round((spec.duration || 30) / 15)) : 2
+        const startIdx = timeSlots.value.indexOf(slot.time_slot)
+
+        if (startIdx < 0) continue
+
+        const endIdx = startIdx + numSlots
+        maxEndIdx = Math.max(maxEndIdx, endIdx)
+      }
+
+      // Check if we need more slots
+      if (maxEndIdx > timeSlots.value.length) {
+        // Calculate needed end time (round up to next quarter hour)
+        const lastTime = timeSlots.value[timeSlots.value.length - 1]
+        const lastMin = timeToMinutes(lastTime)
+        const neededMin = lastMin + ((maxEndIdx - timeSlots.value.length) * 15)
+        const roundedMin = Math.min(timeToMinutes(MAX_END_TIME), neededMin)
+
+        return {
+          endTime: minutesToTime(roundedMin),
+          needsExtension: true
+        }
+      }
+      return null
+    }
+
+    // Dynamic time slots - default to base range, extends if needed
+    const timeSlots = ref(generateTimeSlots(BASE_START_TIME, BASE_END_TIME))
     const schedule = ref({})
     const draggedSpecialty = ref(null)
     const dragSourceKey = ref(null)
@@ -613,6 +674,15 @@ export default {
         }
 
         schedule.value = reconstructScheduleFromSlots(result.slots)
+
+        // Check if we need to extend time range
+        const neededRange = detectRequiredTimeRange(result.slots)
+        if (neededRange?.needsExtension) {
+          extendTimeSlots(neededRange.endTime)
+          // Reconstruct with extended slots
+          schedule.value = reconstructScheduleFromSlots(result.slots)
+        }
+
         console.log('Solver result:', result.status, `(${result.solve_time_ms}ms)`, result.message)
         console.log('Schedule JSON:', JSON.stringify(schedule.value, null, 2))
       } catch (error) {
@@ -690,6 +760,14 @@ export default {
         }
 
         schedule.value = reconstructScheduleFromSlots(saved.slots)
+
+        // Check if loaded schedule needs extended time range
+        const neededRange = detectRequiredTimeRange(saved.slots)
+        if (neededRange?.needsExtension) {
+          extendTimeSlots(neededRange.endTime)
+          schedule.value = reconstructScheduleFromSlots(saved.slots)
+        }
+
         showLoadModal.value = false
       } catch (error) {
         console.error('Error loading schedule:', error)
@@ -903,14 +981,53 @@ button:disabled {
 
 .schedule-grid-container {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.schedule-grid-scroll-wrapper {
   overflow-x: auto;
+  overflow-y: visible;
 }
 
 .schedule-grid {
-  width: 100%;
   border-collapse: collapse;
   background: white;
-  table-layout: fixed;
+  table-layout: auto;
+  width: max-content;
+}
+
+/* Sticky patient column */
+.patient-header,
+.patient-cell {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background: white;
+  box-shadow: 2px 0 4px rgba(0,0,0,0.1);
+}
+
+/* Sticky time header row */
+.schedule-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* Corner cell (patient header is both sticky left and top) */
+.patient-header {
+  z-index: 11;
+}
+
+/* Actions column sticky on right */
+.actions-header,
+.actions-cell {
+  position: sticky;
+  right: 0;
+  z-index: 5;
+  background: #f5f5f5;
+  box-shadow: -2px 0 4px rgba(0,0,0,0.1);
 }
 
 .schedule-grid th,
@@ -1214,7 +1331,9 @@ button:disabled {
 
 @media print {
   .toolbar,
-  .specialty-palette {
+  .specialty-palette,
+  .actions-header,
+  .actions-cell {
     display: none;
   }
 
@@ -1222,17 +1341,74 @@ button:disabled {
     display: block;
   }
 
-  .schedule-grid-container {
+  .schedule-grid-container,
+  .schedule-grid-scroll-wrapper {
     overflow: visible;
+    width: 100%;
   }
 
+  .schedule-grid {
+    table-layout: auto;
+    width: 100%;
+    font-size: 10px;
+  }
+
+  .schedule-grid th,
+  .schedule-grid td {
+    padding: 2px 1px;
+    border: 1px solid #999;
+  }
+
+  /* Time headers - vertical text for narrow columns */
+  .time-header {
+    font-size: 9px;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    min-width: 24px;
+    max-width: 24px;
+    padding: 2px 1px;
+  }
+
+  /* Patient column */
+  .patient-header,
+  .patient-cell {
+    min-width: 100px;
+    max-width: 100px;
+    font-size: 10px;
+  }
+
+  .patient-input,
+  .arrival-select {
+    font-size: 9px;
+    padding: 1px;
+  }
+
+  /* Specialty badges */
+  .scheduled-specialty {
+    font-size: 8px;
+    padding: 2px 1px;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  /* Preserve colors */
   .scheduled-specialty,
   .schedule-grid th,
   .patient-cell,
-  .before-arrival,
-  .double-booked-cell {
+  .before-arrival-entry,
+  .double-booked-entry {
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
+  }
+
+  /* Page settings */
+  @page {
+    size: landscape;
+    margin: 0.4in;
+  }
+
+  tbody tr {
+    page-break-inside: avoid;
   }
 }
 </style>

@@ -22,6 +22,7 @@ backend/.venv
 # Git
 .git
 .gitignore
+.github
 
 # Documentation
 *.md
