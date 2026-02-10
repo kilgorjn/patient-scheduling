@@ -82,6 +82,7 @@
                 class="time-header">
                 {{ timeSlot }}
               </th>
+              <th class="actions-header"></th>
             </tr>
           </thead>
           <tbody>
@@ -136,6 +137,14 @@
                   {{ getEntryForSlot(patient.name, timeSlot).name }}
                 </div>
               </td>
+              <td class="actions-cell">
+                <button
+                  @click="deletePatient(rowIndex, patient.name)"
+                  class="delete-patient-btn"
+                  title="Delete patient">
+                  &times;
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -155,13 +164,14 @@ export default {
   },
   setup(props) {
     const specialties = ref([])
-    const patients = ref([
-      { name: 'Handerson', arrivalTime: '8:00' },
-      { name: 'Wilson', arrivalTime: '8:00' },
-      { name: 'Goodeum', arrivalTime: '8:00' },
-      { name: 'Martin', arrivalTime: '8:00' },
-      { name: 'Leach', arrivalTime: '8:00' }
-    ])
+    // Default to Patient 1, Patient 2, ...
+    const defaultPatientCount = 5
+    const patients = ref(
+      Array.from({ length: defaultPatientCount }, (_, i) => ({
+        name: `Patient ${i + 1}`,
+        arrivalTime: '8:00'
+      }))
+    )
     const timeSlots = ref([
       '8:00', '8:15', '8:30', '8:45',
       '9:00', '9:15', '9:30', '9:45',
@@ -220,6 +230,30 @@ export default {
 
     const addPatient = () => {
       patients.value.push({ name: '', arrivalTime: '8:00' })
+    }
+
+    const deletePatient = (index, patientName) => {
+      const displayName = patientName || `Patient ${index + 1}`
+      const confirmed = confirm(`Are you sure you want to delete ${displayName}? This will remove all their scheduled appointments.`)
+
+      if (!confirmed) return
+
+      const patient = patients.value[index]
+
+      // Remove all schedule entries for this patient
+      const newSchedule = {}
+      for (const [key, entry] of Object.entries(schedule.value)) {
+        const lastDash = key.lastIndexOf('-')
+        const keyPatientName = key.substring(0, lastDash)
+
+        if (keyPatientName !== patient.name) {
+          newSchedule[key] = entry
+        }
+      }
+      schedule.value = newSchedule
+
+      // Remove the patient from the list
+      patients.value.splice(index, 1)
     }
 
     const onArrivalTimeChange = (patient, newArrivalTime) => {
@@ -688,6 +722,7 @@ export default {
       timeSlots,
       schedule,
       addPatient,
+      deletePatient,
       onArrivalTimeChange,
       clearSchedule,
       autoSchedule,
@@ -793,7 +828,7 @@ button:disabled {
 
 .specialty-palette {
   flex-shrink: 0;
-  width: 180px;
+  width: 210px;
   background: #f9f9f9;
   padding: 15px;
   border-radius: 8px;
@@ -841,6 +876,10 @@ button:disabled {
 .specialty-name-row strong {
   font-size: 13px;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .palette-duration {
@@ -849,10 +888,11 @@ button:disabled {
   background: #eee;
   padding: 1px 4px;
   border-radius: 3px;
+  flex-shrink: 0;
 }
 
 .palette-auto-indicator {
-  font-size: 11px;
+  font-size: 16px;
   color: #4CAF50;
   flex-shrink: 0;
 }
@@ -927,6 +967,43 @@ button:disabled {
   color: #666;
   text-align: center;
   cursor: pointer;
+}
+
+.actions-header {
+  min-width: 40px !important;
+  max-width: 40px !important;
+  width: 40px !important;
+}
+
+.actions-cell {
+  background-color: #f5f5f5;
+  text-align: center;
+  vertical-align: middle;
+  min-width: 40px !important;
+  max-width: 40px !important;
+  width: 40px !important;
+}
+
+.delete-patient-btn {
+  background: #f44336;
+  border: none;
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+  color: white;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.8;
+}
+
+.delete-patient-btn:hover {
+  opacity: 1;
+  background: #d32f2f;
 }
 
 .schedule-cell {
