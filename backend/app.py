@@ -28,27 +28,19 @@ class Specialty(BaseModel):
     id: str
     name: str
     color: str
-
-class Team(BaseModel):
-    id: str
-    name: str
-    specialty_ids: List[str]
-    duration: int = 30  # minutes
-    priority: int = 0
+    duration: int = 30       # minutes (multiple of 15)
+    priority: int = 0        # lower = higher priority
     auto_schedule: bool = True
 
-class TeamReorderItem(BaseModel):
+class SpecialtyReorderItem(BaseModel):
     id: str
     priority: int
 
 class ScheduleSlot(BaseModel):
     patient_name: str
     time_slot: str
-    team_id: str
+    specialty_id: str
     pinned: bool = False
-    is_split: bool = False
-    original_team_id: Optional[str] = None
-    split_specialty_id: Optional[str] = None
 
 class Patient(BaseModel):
     name: str
@@ -78,19 +70,45 @@ def save_data(filename: str, data):
 
 @app.get("/api/")
 async def root():
-    return {"message": "Patient Scheduling API", "version": "1.0"}
+    return {"message": "Patient Scheduling API", "version": "2.0"}
 
 # Specialties endpoints
 @app.get("/api/specialties", response_model=List[Specialty])
 async def get_specialties():
-    return load_data("specialties.json")
+    specialties = load_data("specialties.json")
+    return sorted(specialties, key=lambda s: s.get("priority", 0))
 
 @app.post("/api/specialties", response_model=Specialty)
 async def create_specialty(specialty: Specialty):
     specialties = load_data("specialties.json")
-    specialties.append(specialty.dict())
+    max_priority = max((s.get("priority", 0) for s in specialties), default=-1)
+    spec_dict = specialty.dict()
+    spec_dict["priority"] = max_priority + 1
+    specialties.append(spec_dict)
     save_data("specialties.json", specialties)
-    return specialty
+    return Specialty(**spec_dict)
+
+@app.put("/api/specialties/reorder")
+async def reorder_specialties(items: List[SpecialtyReorderItem]):
+    specialties = load_data("specialties.json")
+    priority_map = {item.id: item.priority for item in items}
+    for spec in specialties:
+        if spec["id"] in priority_map:
+            spec["priority"] = priority_map[spec["id"]]
+    save_data("specialties.json", specialties)
+    return {"message": "Specialties reordered"}
+
+@app.put("/api/specialties/{specialty_id}", response_model=Specialty)
+async def update_specialty(specialty_id: str, specialty: Specialty):
+    specialties = load_data("specialties.json")
+    for i, s in enumerate(specialties):
+        if s["id"] == specialty_id:
+            updated = specialty.dict()
+            updated["id"] = specialty_id
+            specialties[i] = updated
+            save_data("specialties.json", specialties)
+            return Specialty(**updated)
+    raise HTTPException(status_code=404, detail="Specialty not found")
 
 @app.delete("/api/specialties/{specialty_id}")
 async def delete_specialty(specialty_id: str):
@@ -98,51 +116,6 @@ async def delete_specialty(specialty_id: str):
     specialties = [s for s in specialties if s["id"] != specialty_id]
     save_data("specialties.json", specialties)
     return {"message": "Specialty deleted"}
-
-# Teams endpoints
-@app.get("/api/teams", response_model=List[Team])
-async def get_teams():
-    teams = load_data("teams.json")
-    return sorted(teams, key=lambda t: t.get("priority", 0))
-
-@app.post("/api/teams", response_model=Team)
-async def create_team(team: Team):
-    teams = load_data("teams.json")
-    max_priority = max((t.get("priority", 0) for t in teams), default=-1)
-    team_dict = team.dict()
-    team_dict["priority"] = max_priority + 1
-    teams.append(team_dict)
-    save_data("teams.json", teams)
-    return Team(**team_dict)
-
-@app.put("/api/teams/reorder")
-async def reorder_teams(items: List[TeamReorderItem]):
-    teams = load_data("teams.json")
-    priority_map = {item.id: item.priority for item in items}
-    for team in teams:
-        if team["id"] in priority_map:
-            team["priority"] = priority_map[team["id"]]
-    save_data("teams.json", teams)
-    return {"message": "Teams reordered"}
-
-@app.put("/api/teams/{team_id}", response_model=Team)
-async def update_team(team_id: str, team: Team):
-    teams = load_data("teams.json")
-    for i, t in enumerate(teams):
-        if t["id"] == team_id:
-            updated = team.dict()
-            updated["id"] = team_id
-            teams[i] = updated
-            save_data("teams.json", teams)
-            return Team(**updated)
-    raise HTTPException(status_code=404, detail="Team not found")
-
-@app.delete("/api/teams/{team_id}")
-async def delete_team(team_id: str):
-    teams = load_data("teams.json")
-    teams = [t for t in teams if t["id"] != team_id]
-    save_data("teams.json", teams)
-    return {"message": "Team deleted"}
 
 # Schedules endpoints
 @app.get("/api/schedules", response_model=List[Schedule])

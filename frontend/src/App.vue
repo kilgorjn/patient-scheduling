@@ -13,11 +13,6 @@
         :class="{ active: activeTab === 'specialties' }">
         Manage Specialties
       </button>
-      <button
-        @click="activeTab = 'teams'"
-        :class="{ active: activeTab === 'teams' }">
-        Manage Teams
-      </button>
     </div>
 
     <div v-show="activeTab === 'schedule'">
@@ -27,10 +22,6 @@
     <div v-show="activeTab === 'specialties'">
       <SpecialtyManager :activeTab="activeTab" />
     </div>
-
-    <div v-show="activeTab === 'teams'">
-      <TeamManager :activeTab="activeTab" />
-    </div>
   </div>
 </template>
 
@@ -38,14 +29,12 @@
 import { ref } from 'vue'
 import ScheduleGrid from './components/ScheduleGrid.vue'
 import SpecialtyManager from './components/SpecialtyManager.vue'
-import TeamManager from './components/TeamManager.vue'
 
 export default {
   name: 'App',
   components: {
     ScheduleGrid,
-    SpecialtyManager,
-    TeamManager
+    SpecialtyManager
   },
   setup() {
     const activeTab = ref('schedule')

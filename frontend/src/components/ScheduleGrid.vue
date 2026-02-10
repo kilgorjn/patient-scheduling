@@ -4,6 +4,7 @@
 
     <div class="toolbar">
       <button @click="addPatient">Add Patient</button>
+      <button @click="clearSchedule">Clear Schedule</button>
       <button @click="saveSchedule">Save Schedule</button>
       <button @click="openLoadModal">Load Schedule</button>
       <button @click="autoSchedule" :disabled="isAutoScheduling">
@@ -13,12 +14,20 @@
       <button @click="printSchedule">Print Schedule</button>
     </div>
 
+    <!-- Solver Progress Indicator -->
+    <div v-if="isAutoScheduling" class="solver-progress">
+      <div class="progress-bar-container">
+        <div class="progress-bar-fill"></div>
+      </div>
+      <div class="progress-message">Optimizing schedule... (may take up to 30 seconds)</div>
+    </div>
+
     <!-- Load Schedule Modal -->
     <div v-if="showLoadModal" class="modal-overlay" @click.self="showLoadModal = false">
       <div class="modal">
         <div class="modal-header">
           <h3>Load Schedule</h3>
-          <button @click="showLoadModal = false" class="modal-close">×</button>
+          <button @click="showLoadModal = false" class="modal-close">&times;</button>
         </div>
         <div class="modal-body">
           <div v-if="savedSchedules.length === 0" class="no-schedules">
@@ -40,40 +49,25 @@
     </div>
 
     <div class="schedule-wrapper">
-      <!-- Team palette -->
-      <div class="team-palette">
-        <h3>Teams</h3>
-        <draggable
-          v-model="teams"
-          item-key="id"
-          handle=".palette-reorder-handle"
-          @end="onPaletteReorder">
-          <template #item="{ element: team }">
-            <div class="team-block">
-              <span class="palette-reorder-handle" title="Drag to reorder">&#x2630;</span>
-              <div
-                class="team-content"
-                draggable="true"
-                @dragstart="onDragStart($event, team)">
-                <div class="team-name-row">
-                  <strong>{{ team.name }}</strong>
-                  <span
-                    class="palette-auto-indicator"
-                    :class="{ 'auto-off': team.auto_schedule === false }"
-                    title="Auto-schedule">&#x2699;</span>
-                </div>
-                <div class="team-specialties-mini">
-                  <span
-                    v-for="specialtyId in team.specialty_ids"
-                    :key="specialtyId"
-                    class="specialty-dot"
-                    :style="{ backgroundColor: getSpecialtyColor(specialtyId) }">
-                  </span>
-                </div>
-              </div>
+      <!-- Specialty palette -->
+      <div class="specialty-palette">
+        <h3>Specialties</h3>
+        <div v-for="spec in specialties" :key="spec.id" class="specialty-block">
+          <div
+            class="specialty-content"
+            draggable="true"
+            @dragstart="onDragStart($event, spec)"
+            :style="{ borderLeft: '4px solid ' + spec.color }">
+            <div class="specialty-name-row">
+              <strong>{{ spec.name }}</strong>
+              <span class="palette-duration">{{ spec.duration }}m</span>
+              <span
+                class="palette-auto-indicator"
+                :class="{ 'auto-off': spec.auto_schedule === false }"
+                title="Auto-schedule">&#x2699;</span>
             </div>
-          </template>
-        </draggable>
+          </div>
+        </div>
       </div>
 
       <!-- Schedule grid -->
@@ -82,7 +76,10 @@
           <thead>
             <tr>
               <th class="patient-header">Patient</th>
-              <th v-for="timeSlot in timeSlots" :key="timeSlot">
+              <th
+                v-for="timeSlot in timeSlots"
+                :key="timeSlot"
+                class="time-header">
                 {{ timeSlot }}
               </th>
             </tr>
@@ -95,7 +92,10 @@
                   placeholder="Patient name"
                   class="patient-input"
                 />
-                <select v-model="patient.arrivalTime" class="arrival-select">
+                <select
+                  :value="patient.arrivalTime"
+                  @change="onArrivalTimeChange(patient, $event.target.value)"
+                  class="arrival-select">
                   <option value="">Arrival...</option>
                   <option v-for="slot in timeSlots" :key="slot" :value="slot">{{ slot }}</option>
                 </select>
@@ -106,32 +106,34 @@
                 class="schedule-cell"
                 :class="{
                   'double-booked-cell': isDoubleBooked(patient.name, timeSlot),
-                  'span-start-cell': getTeamForSlot(patient.name, timeSlot)?.spanStart,
-                  'span-continuation-cell': getTeamForSlot(patient.name, timeSlot)?.spanContinuation,
+                  'span-continuation-cell': getEntryForSlot(patient.name, timeSlot)?.spanContinuation,
                   'before-arrival': isBeforeArrival(patient, timeSlot)
                 }"
                 @dragover="onDragOver($event, patient, timeSlot)"
                 @drop="onDrop($event, patient.name, timeSlot, patient)">
                 <div
-                  v-if="getTeamForSlot(patient.name, timeSlot)"
-                  class="scheduled-team"
+                  v-if="getEntryForSlot(patient.name, timeSlot) && !getEntryForSlot(patient.name, timeSlot).spanContinuation"
+                  class="scheduled-specialty"
                   :class="{
-                    'double-booked-team': isDoubleBooked(patient.name, timeSlot),
-                    'duplicate-team': isDuplicateTeam(patient.name, timeSlot),
-                    'span-continuation': getTeamForSlot(patient.name, timeSlot)?.spanContinuation,
-                    'pinned-team': getTeamForSlot(patient.name, timeSlot)?.pinned
+                    'double-booked-entry': isDoubleBooked(patient.name, timeSlot),
+                    'duplicate-entry': isDuplicateSpecialty(patient.name, timeSlot),
+                    'pinned-entry': getEntryForSlot(patient.name, timeSlot)?.pinned,
+                    'before-arrival-entry': isEntryBeforeArrival(patient.name, timeSlot)
                   }"
-                  :style="getTeamStyle(getTeamForSlot(patient.name, timeSlot))"
-                  :draggable="!getTeamForSlot(patient.name, timeSlot)?.pinned"
+                  :style="getSpecialtyStyle(patient.name, timeSlot)"
+                  :draggable="!getEntryForSlot(patient.name, timeSlot)?.pinned"
                   @dragstart="onGridDragStart($event, patient.name, timeSlot)"
-                  @dblclick="removeTeam(patient.name, timeSlot)">
+                  @dblclick="removeEntry(patient.name, timeSlot)">
                   <span
-                    v-if="!getTeamForSlot(patient.name, timeSlot)?.spanContinuation"
+                    v-if="isEntryBeforeArrival(patient.name, timeSlot)"
+                    class="warning-icon"
+                    title="Scheduled before patient arrival">&#x26A0;</span>
+                  <span
                     class="pin-btn"
-                    :class="{ 'is-pinned': getTeamForSlot(patient.name, timeSlot)?.pinned }"
+                    :class="{ 'is-pinned': getEntryForSlot(patient.name, timeSlot)?.pinned }"
                     @click.stop="togglePin(patient.name, timeSlot)"
-                    :title="getTeamForSlot(patient.name, timeSlot)?.pinned ? 'Unpin' : 'Pin'">&#x1F4CC;</span>
-                  {{ getTeamForSlot(patient.name, timeSlot)?.spanContinuation ? '' : getTeamForSlot(patient.name, timeSlot).name }}
+                    :title="getEntryForSlot(patient.name, timeSlot)?.pinned ? 'Unpin' : 'Pin'">&#x1F4CC;</span>
+                  {{ getEntryForSlot(patient.name, timeSlot).name }}
                 </div>
               </td>
             </tr>
@@ -145,16 +147,13 @@
 <script>
 import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
-import draggable from 'vuedraggable'
 
 export default {
   name: 'ScheduleGrid',
-  components: { draggable },
   props: {
     activeTab: String
   },
   setup(props) {
-    const teams = ref([])
     const specialties = ref([])
     const patients = ref([
       { name: 'Handerson', arrivalTime: '8:00' },
@@ -164,25 +163,20 @@ export default {
       { name: 'Leach', arrivalTime: '8:00' }
     ])
     const timeSlots = ref([
-      '8:00', '8:30', '9:00', '9:30', '10:00', '10:30',
-      '11:00', '11:30', '12:00', '12:30', '13:00', '13:30'
+      '8:00', '8:15', '8:30', '8:45',
+      '9:00', '9:15', '9:30', '9:45',
+      '10:00', '10:15', '10:30', '10:45',
+      '11:00', '11:15', '11:30', '11:45',
+      '12:00', '12:15', '12:30', '12:45',
+      '13:00', '13:15', '13:30', '13:45',
     ])
     const schedule = ref({})
-    const draggedTeam = ref(null)
+    const draggedSpecialty = ref(null)
     const dragSourceKey = ref(null)
     const showLoadModal = ref(false)
     const savedSchedules = ref([])
     const isAutoScheduling = ref(false)
     const autoScheduleError = ref('')
-
-    const loadTeams = async () => {
-      try {
-        const response = await axios.get('/api/teams')
-        teams.value = response.data
-      } catch (error) {
-        console.error('Error loading teams:', error)
-      }
-    }
 
     const loadSpecialties = async () => {
       try {
@@ -193,12 +187,16 @@ export default {
       }
     }
 
-    const getNextTimeSlot = (timeSlot) => {
-      const idx = timeSlots.value.indexOf(timeSlot)
-      if (idx >= 0 && idx < timeSlots.value.length - 1) {
-        return timeSlots.value[idx + 1]
-      }
-      return null
+    // How many 15-min slots a specialty occupies
+    const durationSlots = (spec) => {
+      return Math.max(1, Math.round((spec.duration || 30) / 15))
+    }
+
+    // Get N consecutive time slots starting at startSlot
+    const getConsecutiveSlots = (startSlot, count) => {
+      const idx = timeSlots.value.indexOf(startSlot)
+      if (idx < 0 || idx + count > timeSlots.value.length) return null
+      return timeSlots.value.slice(idx, idx + count)
     }
 
     const isBeforeArrival = (patient, timeSlot) => {
@@ -206,6 +204,12 @@ export default {
       const arrivalIdx = timeSlots.value.indexOf(patient.arrivalTime)
       const slotIdx = timeSlots.value.indexOf(timeSlot)
       return slotIdx < arrivalIdx
+    }
+
+    const isEntryBeforeArrival = (patientName, timeSlot) => {
+      const patient = patients.value.find(p => p.name === patientName)
+      if (!patient) return false
+      return isBeforeArrival(patient, timeSlot)
     }
 
     const onDragOver = (event, patient, timeSlot) => {
@@ -218,8 +222,24 @@ export default {
       patients.value.push({ name: '', arrivalTime: '8:00' })
     }
 
-    const onDragStart = (event, team) => {
-      draggedTeam.value = team
+    const onArrivalTimeChange = (patient, newArrivalTime) => {
+      // Just update the arrival time - validation is handled visually
+      patient.arrivalTime = newArrivalTime
+    }
+
+    const clearSchedule = () => {
+      // Remove all non-pinned entries from the schedule
+      const newSchedule = {}
+      for (const [key, entry] of Object.entries(schedule.value)) {
+        if (entry.pinned) {
+          newSchedule[key] = entry
+        }
+      }
+      schedule.value = newSchedule
+    }
+
+    const onDragStart = (event, spec) => {
+      draggedSpecialty.value = spec
       dragSourceKey.value = null
       event.dataTransfer.effectAllowed = 'copy'
     }
@@ -228,113 +248,135 @@ export default {
       const key = `${patientName}-${timeSlot}`
       const entry = schedule.value[key]
 
-      // Block drag on pinned teams
+      // Block drag on pinned entries
       if (entry && entry.pinned) {
         event.preventDefault()
         return
       }
-      if (entry && entry.spanContinuation) {
-        const startEntry = schedule.value[`${patientName}-${entry.spanStartSlot}`]
-        if (startEntry && startEntry.pinned) {
-          event.preventDefault()
-          return
-        }
-      }
 
-      // If dragging a continuation cell, find the start cell instead
-      if (entry && entry.spanContinuation) {
-        draggedTeam.value = { ...entry, spanContinuation: undefined, spanStart: undefined }
-        dragSourceKey.value = `${patientName}-${entry.spanStartSlot}`
-      } else {
-        draggedTeam.value = { ...entry, spanContinuation: undefined, spanStart: undefined }
-        dragSourceKey.value = key
-      }
+      // Find the specialty from our list to get full data
+      const spec = specialties.value.find(s => s.id === entry.specialty_id)
+      draggedSpecialty.value = spec || entry
+      dragSourceKey.value = key
       event.dataTransfer.effectAllowed = 'move'
     }
 
-    const clearTeamSlots = (key) => {
+    // Clear all slots occupied by a specialty entry starting at the given key
+    const clearEntrySlots = (key) => {
       const entry = schedule.value[key]
       if (!entry) return
-      // Remove the main slot
-      delete schedule.value[key]
-      // If it's a span start, also remove the continuation
-      if (entry.spanStart) {
-        const patientName = key.substring(0, key.lastIndexOf('-'))
-        const contKey = `${patientName}-${entry.spanNextSlot}`
-        delete schedule.value[contKey]
+
+      const lastDash = key.lastIndexOf('-')
+      const patientName = key.substring(0, lastDash)
+      const startSlot = key.substring(lastDash + 1)
+
+      // Find the specialty to know how many slots to clear
+      const spec = specialties.value.find(s => s.id === entry.specialty_id)
+      const numSlots = spec ? durationSlots(spec) : 1
+
+      const slots = getConsecutiveSlots(startSlot, numSlots)
+      if (slots) {
+        for (const slot of slots) {
+          delete schedule.value[`${patientName}-${slot}`]
+        }
+      } else {
+        // Fallback: just delete the one slot
+        delete schedule.value[key]
       }
     }
 
     const onDrop = (event, patientName, timeSlot, patient) => {
-      if (!draggedTeam.value) return
+      if (!draggedSpecialty.value) return
 
       // Block drops on before-arrival cells
       if (patient && isBeforeArrival(patient, timeSlot)) {
-        draggedTeam.value = null
+        draggedSpecialty.value = null
         dragSourceKey.value = null
         return
       }
 
-      // Block drops onto pinned teams
-      const existingEntry = schedule.value[`${patientName}-${timeSlot}`]
-      if (existingEntry && existingEntry.pinned) {
-        draggedTeam.value = null
+      const spec = draggedSpecialty.value
+      const numSlots = durationSlots(spec)
+
+      // Check if the specialty fits starting at this slot
+      const slots = getConsecutiveSlots(timeSlot, numSlots)
+      if (!slots) {
+        draggedSpecialty.value = null
         dragSourceKey.value = null
         return
       }
 
-      const team = draggedTeam.value
-      const is60Min = team.duration === 60
-
-      // Check if 60-min team fits (not at the last slot)
-      if (is60Min && !getNextTimeSlot(timeSlot)) {
-        draggedTeam.value = null
-        dragSourceKey.value = null
-        return
+      // Block drops onto pinned entries
+      for (const slot of slots) {
+        const existingKey = `${patientName}-${slot}`
+        const existing = schedule.value[existingKey]
+        if (existing && existing.pinned) {
+          draggedSpecialty.value = null
+          dragSourceKey.value = null
+          return
+        }
       }
+
+      // Determine if this is a new placement from palette (pin it) or a move within grid (preserve state)
+      const isNewPlacement = !dragSourceKey.value
 
       // Remove from old position if moving within the grid
       if (dragSourceKey.value) {
-        clearTeamSlots(dragSourceKey.value)
+        clearEntrySlots(dragSourceKey.value)
       }
 
-      if (is60Min) {
-        const nextSlot = getNextTimeSlot(timeSlot)
-        const key = `${patientName}-${timeSlot}`
-        const nextKey = `${patientName}-${nextSlot}`
-        schedule.value[key] = { ...team, spanStart: true, spanNextSlot: nextSlot }
-        schedule.value[nextKey] = { ...team, spanContinuation: true, spanStartSlot: timeSlot }
-      } else {
-        const key = `${patientName}-${timeSlot}`
-        schedule.value[key] = { ...team }
+      // Clear any existing entries in the target slots
+      for (const slot of slots) {
+        const existingKey = `${patientName}-${slot}`
+        const existing = schedule.value[existingKey]
+        if (existing && !existing.spanContinuation) {
+          clearEntrySlots(existingKey)
+        } else if (existing && existing.spanContinuation) {
+          // Clear the parent span start too
+          const parentKey = `${patientName}-${existing.spanStartSlot}`
+          clearEntrySlots(parentKey)
+        }
       }
 
-      draggedTeam.value = null
+      // Place the specialty (pinned if dragged from palette, unpinned if moved within grid)
+      const startKey = `${patientName}-${slots[0]}`
+      schedule.value[startKey] = {
+        specialty_id: spec.id,
+        name: spec.name,
+        color: spec.color,
+        duration: spec.duration,
+        pinned: isNewPlacement,
+        spanStart: numSlots > 1,
+      }
+
+      // Place continuation cells for multi-slot specialties
+      for (let i = 1; i < numSlots; i++) {
+        const contKey = `${patientName}-${slots[i]}`
+        schedule.value[contKey] = {
+          specialty_id: spec.id,
+          name: spec.name,
+          color: spec.color,
+          duration: spec.duration,
+          pinned: isNewPlacement,
+          spanContinuation: true,
+          spanStartSlot: slots[0],
+        }
+      }
+
+      draggedSpecialty.value = null
       dragSourceKey.value = null
     }
 
-    const getTeamForSlot = (patientName, timeSlot) => {
-      const key = `${patientName}-${timeSlot}`
-      return schedule.value[key]
+    const getEntryForSlot = (patientName, timeSlot) => {
+      return schedule.value[`${patientName}-${timeSlot}`]
     }
 
-    const removeTeam = (patientName, timeSlot) => {
+    const removeEntry = (patientName, timeSlot) => {
       const key = `${patientName}-${timeSlot}`
       const entry = schedule.value[key]
       if (!entry) return
       if (entry.pinned) return
-      if (entry.spanContinuation) {
-        const startEntry = schedule.value[`${patientName}-${entry.spanStartSlot}`]
-        if (startEntry && startEntry.pinned) return
-      }
-
-      if (entry.spanContinuation) {
-        const startKey = `${patientName}-${entry.spanStartSlot}`
-        delete schedule.value[startKey]
-        delete schedule.value[key]
-      } else {
-        clearTeamSlots(key)
-      }
+      clearEntrySlots(key)
     }
 
     const togglePin = (patientName, timeSlot) => {
@@ -345,51 +387,40 @@ export default {
       const newPinned = !entry.pinned
       entry.pinned = newPinned
 
-      // Also pin/unpin the span partner for 60-min teams
-      if (entry.spanStart) {
-        const contKey = `${patientName}-${entry.spanNextSlot}`
-        if (schedule.value[contKey]) {
-          schedule.value[contKey].pinned = newPinned
-        }
-      }
-      if (entry.spanContinuation) {
-        const startKey = `${patientName}-${entry.spanStartSlot}`
-        if (schedule.value[startKey]) {
-          schedule.value[startKey].pinned = newPinned
+      // Also pin/unpin all continuation cells
+      const spec = specialties.value.find(s => s.id === entry.specialty_id)
+      const numSlots = spec ? durationSlots(spec) : 1
+      const slots = getConsecutiveSlots(timeSlot, numSlots)
+      if (slots) {
+        for (let i = 1; i < slots.length; i++) {
+          const contEntry = schedule.value[`${patientName}-${slots[i]}`]
+          if (contEntry) {
+            contEntry.pinned = newPinned
+          }
         }
       }
     }
 
-    // Detect double-booked teams: same team scheduled for 2+ patients at the same time
+    // Detect double-booked specialties: same specialty scheduled for 2+ patients at the same time
     const doubleBookedSlots = computed(() => {
       const conflicts = new Set()
       for (const timeSlot of timeSlots.value) {
-        const teamsAtTime = []
+        const specsAtTime = []
         for (const patient of patients.value) {
           const key = `${patient.name}-${timeSlot}`
-          const team = schedule.value[key]
-          if (team) {
-            teamsAtTime.push({ key, teamId: team.id })
+          const entry = schedule.value[key]
+          if (entry) {
+            specsAtTime.push({ key, specId: entry.specialty_id })
           }
         }
-        // Find teams that appear more than once in this time slot
-        const teamCounts = {}
-        for (const entry of teamsAtTime) {
-          if (!teamCounts[entry.teamId]) teamCounts[entry.teamId] = []
-          teamCounts[entry.teamId].push(entry.key)
+        const specCounts = {}
+        for (const item of specsAtTime) {
+          if (!specCounts[item.specId]) specCounts[item.specId] = []
+          specCounts[item.specId].push(item.key)
         }
-        for (const keys of Object.values(teamCounts)) {
+        for (const keys of Object.values(specCounts)) {
           if (keys.length > 1) {
-            keys.forEach(k => {
-              conflicts.add(k)
-              // Also mark the span partner if it exists
-              const entry = schedule.value[k]
-              if (entry) {
-                const patientName = k.substring(0, k.lastIndexOf('-'))
-                if (entry.spanStart) conflicts.add(`${patientName}-${entry.spanNextSlot}`)
-                if (entry.spanContinuation) conflicts.add(`${patientName}-${entry.spanStartSlot}`)
-              }
-            })
+            keys.forEach(k => conflicts.add(k))
           }
         }
       }
@@ -397,109 +428,100 @@ export default {
     })
 
     const isDoubleBooked = (patientName, timeSlot) => {
-      const key = `${patientName}-${timeSlot}`
-      return doubleBookedSlots.value.has(key)
+      return doubleBookedSlots.value.has(`${patientName}-${timeSlot}`)
     }
 
-    // Detect duplicate teams: same team scheduled more than once for the same patient
-    const duplicateTeamSlots = computed(() => {
+    // Detect duplicate specialties: same specialty scheduled more than once for the same patient
+    const duplicateSpecialtySlots = computed(() => {
       const duplicates = new Set()
       for (const patient of patients.value) {
-        // Collect all team IDs for this patient (skip continuation cells)
-        const teamEntries = []
+        const specEntries = []
         for (const timeSlot of timeSlots.value) {
           const key = `${patient.name}-${timeSlot}`
-          const team = schedule.value[key]
-          if (team && !team.spanContinuation) {
-            teamEntries.push({ key, teamId: team.id })
+          const entry = schedule.value[key]
+          if (entry && !entry.spanContinuation) {
+            specEntries.push({ key, specId: entry.specialty_id })
           }
         }
-        // Find teams that appear more than once
-        const teamCounts = {}
-        for (const entry of teamEntries) {
-          if (!teamCounts[entry.teamId]) teamCounts[entry.teamId] = []
-          teamCounts[entry.teamId].push(entry.key)
+        const specCounts = {}
+        for (const item of specEntries) {
+          if (!specCounts[item.specId]) specCounts[item.specId] = []
+          specCounts[item.specId].push(item.key)
         }
-        for (const keys of Object.values(teamCounts)) {
+        for (const keys of Object.values(specCounts)) {
           if (keys.length > 1) {
-            keys.forEach(k => {
-              duplicates.add(k)
-              // Also mark span partner
-              const entry = schedule.value[k]
-              if (entry && entry.spanStart) {
-                duplicates.add(`${patient.name}-${entry.spanNextSlot}`)
-              }
-            })
+            keys.forEach(k => duplicates.add(k))
           }
         }
       }
       return duplicates
     })
 
-    const isDuplicateTeam = (patientName, timeSlot) => {
-      const key = `${patientName}-${timeSlot}`
-      return duplicateTeamSlots.value.has(key)
+    const isDuplicateSpecialty = (patientName, timeSlot) => {
+      return duplicateSpecialtySlots.value.has(`${patientName}-${timeSlot}`)
     }
 
-    const getSpecialtyColor = (id) => {
-      const specialty = specialties.value.find(s => s.id === id)
-      return specialty ? specialty.color : '#cccccc'
-    }
+    const getSpecialtyStyle = (patientName, timeSlot) => {
+      const entry = getEntryForSlot(patientName, timeSlot)
+      if (!entry) return {}
 
-    const getTeamStyle = (team) => {
-      if (!team || !team.specialty_ids || team.specialty_ids.length === 0) {
-        return { backgroundColor: '#cccccc' }
+      const spec = specialties.value.find(s => s.id === entry.specialty_id)
+      const color = spec ? spec.color : (entry.color || '#cccccc')
+      const numSlots = spec ? durationSlots(spec) : 1
+
+      const style = {
+        backgroundColor: color,
       }
 
-      // Use the first specialty's color for simplicity
-      const firstColor = getSpecialtyColor(team.specialty_ids[0])
-
-      // If multiple specialties, create a gradient
-      if (team.specialty_ids.length > 1) {
-        const colors = team.specialty_ids.map(id => getSpecialtyColor(id))
-        return {
-          background: `linear-gradient(135deg, ${colors.join(', ')})`
-        }
+      // For multi-slot specialties, span across columns
+      if (numSlots > 1) {
+        // Use calc() to span across cell borders
+        style.width = `calc(${numSlots * 100}% + ${numSlots - 1}px)`
+        style.position = 'relative'
+        style.zIndex = '2'
       }
 
-      return { backgroundColor: firstColor }
+      return style
     }
 
-    // Reconstruct schedule object from flat slot list (shared by autoSchedule and loadScheduleById)
+    // Reconstruct schedule object from flat slot list
     const reconstructScheduleFromSlots = (slots) => {
       const newSchedule = {}
       for (const slot of slots) {
         const key = `${slot.patient_name}-${slot.time_slot}`
         const pinned = !!slot.pinned
 
-        if (slot.is_split && slot.split_specialty_id) {
-          const specialty = specialties.value.find(s => s.id === slot.split_specialty_id)
-          const originalTeam = teams.value.find(t => t.id === slot.original_team_id)
-          newSchedule[key] = {
-            id: slot.team_id,
-            name: specialty ? specialty.name : 'Unknown',
-            specialty_ids: [slot.split_specialty_id],
-            duration: 30,
-            pinned,
-            isSplit: true,
-            originalTeamId: slot.original_team_id,
-            originalTeamName: originalTeam ? originalTeam.name : 'Unknown',
-            splitSpecialtyId: slot.split_specialty_id
-          }
-          continue
+        const spec = specialties.value.find(s => s.id === slot.specialty_id)
+        if (!spec) continue
+
+        const numSlots = durationSlots(spec)
+
+        // Only create entries from the start slot (solver only emits start slots)
+        if (newSchedule[key]?.spanContinuation) continue
+
+        const consecutiveSlots = getConsecutiveSlots(slot.time_slot, numSlots)
+        if (!consecutiveSlots) continue
+
+        newSchedule[key] = {
+          specialty_id: spec.id,
+          name: spec.name,
+          color: spec.color,
+          duration: spec.duration,
+          pinned,
+          spanStart: numSlots > 1,
         }
 
-        const team = teams.value.find(t => t.id === slot.team_id)
-        if (!team) continue
-
-        if (team.duration === 60) {
-          const nextSlot = getNextTimeSlot(slot.time_slot)
-          if (nextSlot && !newSchedule[key]?.spanContinuation) {
-            newSchedule[key] = { ...team, spanStart: true, spanNextSlot: nextSlot, pinned }
-            newSchedule[`${slot.patient_name}-${nextSlot}`] = { ...team, spanContinuation: true, spanStartSlot: slot.time_slot, pinned }
+        for (let i = 1; i < consecutiveSlots.length; i++) {
+          const contKey = `${slot.patient_name}-${consecutiveSlots[i]}`
+          newSchedule[contKey] = {
+            specialty_id: spec.id,
+            name: spec.name,
+            color: spec.color,
+            duration: spec.duration,
+            pinned,
+            spanContinuation: true,
+            spanStartSlot: slot.time_slot,
           }
-        } else {
-          newSchedule[key] = { ...team, pinned }
         }
       }
       return newSchedule
@@ -510,7 +532,7 @@ export default {
       autoScheduleError.value = ''
 
       try {
-        // Collect pinned slots from current schedule
+        // Collect pinned slots from current schedule (only start slots, not continuations)
         const pinnedSlots = []
         for (const [key, entry] of Object.entries(schedule.value)) {
           if (!entry.pinned) continue
@@ -523,10 +545,7 @@ export default {
           pinnedSlots.push({
             patient_name: patientName,
             time_slot: timeSlot,
-            team_id: entry.isSplit ? entry.id : entry.id,
-            is_split: !!entry.isSplit,
-            original_team_id: entry.originalTeamId || null,
-            split_specialty_id: entry.splitSpecialtyId || null,
+            specialty_id: entry.specialty_id,
           })
         }
 
@@ -535,18 +554,12 @@ export default {
             name: p.name,
             arrival_time: p.arrivalTime || '8:00'
           })),
-          teams: teams.value.map(t => ({
-            id: t.id,
-            name: t.name,
-            specialty_ids: t.specialty_ids,
-            duration: t.duration || 30,
-            priority: t.priority || 0,
-            auto_schedule: t.auto_schedule !== false,
-            capacity: t.capacity || 1,
-          })),
           specialties: specialties.value.map(s => ({
             id: s.id,
             name: s.name,
+            duration: s.duration || 30,
+            priority: s.priority || 0,
+            auto_schedule: s.auto_schedule !== false,
           })),
           pinned_slots: pinnedSlots,
           time_slots: timeSlots.value,
@@ -578,23 +591,25 @@ export default {
 
     const saveSchedule = async () => {
       try {
+        // Only save start slots (not continuations) — reconstruct will rebuild them
+        const slots = []
+        for (const [key, entry] of Object.entries(schedule.value)) {
+          if (entry.spanContinuation) continue
+          const lastDash = key.lastIndexOf('-')
+          const patientName = key.substring(0, lastDash)
+          const timeSlot = key.substring(lastDash + 1)
+          slots.push({
+            patient_name: patientName,
+            time_slot: timeSlot,
+            specialty_id: entry.specialty_id,
+            pinned: !!entry.pinned,
+          })
+        }
+
         const scheduleData = {
           id: Date.now().toString(),
           name: `Schedule ${new Date().toLocaleString()}`,
-          slots: Object.entries(schedule.value).map(([key, team]) => {
-            const lastDash = key.lastIndexOf('-')
-            const patientName = key.substring(0, lastDash)
-            const timeSlot = key.substring(lastDash + 1)
-            return {
-              patient_name: patientName,
-              time_slot: timeSlot,
-              team_id: team.id,
-              pinned: !!team.pinned,
-              is_split: !!team.isSplit,
-              original_team_id: team.originalTeamId || null,
-              split_specialty_id: team.splitSpecialtyId || null
-            }
-          }),
+          slots,
           patients: patients.value.map(p => ({
             name: p.name,
             arrival_time: p.arrivalTime
@@ -612,16 +627,6 @@ export default {
 
     const printSchedule = () => {
       window.print()
-    }
-
-    const onPaletteReorder = async () => {
-      const reorderData = teams.value.map((t, i) => ({ id: t.id, priority: i }))
-      try {
-        await axios.put('/api/teams/reorder', reorderData)
-      } catch (error) {
-        console.error('Error reordering teams:', error)
-        await loadTeams()
-      }
     }
 
     const openLoadModal = async () => {
@@ -646,7 +651,6 @@ export default {
             arrivalTime: p.arrival_time
           }))
         } else {
-          // Backward compat: extract patient names from slots
           const names = [...new Set(saved.slots.map(s => s.patient_name))]
           patients.value = names.map(name => ({ name, arrivalTime: '8:00' }))
         }
@@ -670,40 +674,37 @@ export default {
 
     watch(() => props.activeTab, (tab) => {
       if (tab === 'schedule') {
-        loadTeams()
         loadSpecialties()
       }
     })
 
     onMounted(() => {
-      loadTeams()
       loadSpecialties()
     })
 
     return {
-      teams,
       specialties,
       patients,
       timeSlots,
       schedule,
       addPatient,
+      onArrivalTimeChange,
+      clearSchedule,
       autoSchedule,
       isBeforeArrival,
+      isEntryBeforeArrival,
       onDragOver,
-      getNextTimeSlot,
       onDragStart,
       onGridDragStart,
       onDrop,
-      getTeamForSlot,
-      removeTeam,
+      getEntryForSlot,
+      removeEntry,
       togglePin,
       isDoubleBooked,
-      isDuplicateTeam,
-      getSpecialtyColor,
-      getTeamStyle,
+      isDuplicateSpecialty,
+      getSpecialtyStyle,
       saveSchedule,
       printSchedule,
-      onPaletteReorder,
       showLoadModal,
       savedSchedules,
       openLoadModal,
@@ -734,14 +735,65 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.solver-progress {
+  background: #e3f2fd;
+  border: 2px solid #2196F3;
+  border-radius: 8px;
+  padding: 15px 20px;
+  margin-bottom: 20px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: 8px;
+  background: #bbdefb;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2196F3, #1976D2, #2196F3);
+  background-size: 200% 100%;
+  animation: progress-slide 1.5s linear infinite;
+  border-radius: 4px;
+}
+
+.progress-message {
+  color: #1565C0;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    background-color: #e3f2fd;
+  }
+  50% {
+    background-color: #bbdefb;
+  }
+}
+
+@keyframes progress-slide {
+  0% {
+    background-position: 0% 0%;
+  }
+  100% {
+    background-position: 200% 0%;
+  }
+}
+
 .schedule-wrapper {
   display: flex;
   gap: 20px;
 }
 
-.team-palette {
+.specialty-palette {
   flex-shrink: 0;
-  width: 200px;
+  width: 180px;
   background: #f9f9f9;
   padding: 15px;
   border-radius: 8px;
@@ -749,61 +801,54 @@ button:disabled {
   overflow-y: auto;
 }
 
-.team-palette h3 {
+.specialty-palette h3 {
   margin-top: 0;
   margin-bottom: 15px;
   font-size: 16px;
 }
 
-.team-block {
+.specialty-block {
   background: white;
   border: 2px solid #ddd;
   border-radius: 6px;
-  padding: 8px 10px;
-  margin-bottom: 10px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   transition: all 0.2s;
 }
 
-.team-block:hover {
+.specialty-block:hover {
   border-color: #4CAF50;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 6px rgba(0,0,0,0.1);
 }
 
-.palette-reorder-handle {
-  cursor: grab;
-  color: #999;
-  font-size: 14px;
-  flex-shrink: 0;
-  user-select: none;
-  padding: 2px;
-}
-
-.palette-reorder-handle:hover {
-  color: #666;
-}
-
-.palette-reorder-handle:active {
-  cursor: grabbing;
-}
-
-.team-content {
+.specialty-content {
   flex: 1;
   cursor: move;
+  padding: 4px 6px;
+  border-radius: 3px;
 }
 
-.team-name-row {
+.specialty-name-row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 5px;
+  gap: 6px;
 }
 
-.team-name-row strong {
-  font-size: 14px;
+.specialty-name-row strong {
+  font-size: 13px;
+  flex: 1;
+}
+
+.palette-duration {
+  font-size: 10px;
+  color: #666;
+  background: #eee;
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 
 .palette-auto-indicator {
@@ -813,25 +858,7 @@ button:disabled {
 }
 
 .palette-auto-indicator.auto-off {
-  color: #ccc;
-}
-
-.team-content strong {
-  display: block;
-  margin-bottom: 5px;
-  font-size: 14px;
-}
-
-.team-specialties-mini {
-  display: flex;
-  gap: 4px;
-}
-
-.specialty-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.2);
+  color: #f44336;
 }
 
 .schedule-grid-container {
@@ -843,14 +870,16 @@ button:disabled {
   width: 100%;
   border-collapse: collapse;
   background: white;
+  table-layout: fixed;
 }
 
 .schedule-grid th,
 .schedule-grid td {
   border: 1px solid #ddd;
-  padding: 8px;
+  padding: 4px 2px;
   text-align: center;
-  min-width: 80px;
+  min-width: 52px;
+  max-width: 52px;
 }
 
 .schedule-grid th {
@@ -862,13 +891,23 @@ button:disabled {
   z-index: 10;
 }
 
+.time-header {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .patient-header {
-  min-width: 120px;
+  min-width: 160px !important;
+  max-width: 160px !important;
+  width: 160px !important;
 }
 
 .patient-cell {
   background-color: #e8f5e9;
   font-weight: bold;
+  min-width: 160px !important;
+  max-width: 160px !important;
+  width: 160px !important;
 }
 
 .patient-input {
@@ -877,55 +916,48 @@ button:disabled {
   background: transparent;
   font-weight: bold;
   text-align: center;
+  font-size: 12px;
 }
 
 .arrival-select {
   width: 100%;
   border: none;
   background: transparent;
-  font-size: 11px;
+  font-size: 10px;
   color: #666;
   text-align: center;
   cursor: pointer;
 }
 
 .schedule-cell {
-  min-height: 60px;
+  min-height: 50px;
   position: relative;
   vertical-align: middle;
+  overflow: visible;
 }
 
-.scheduled-team {
-  padding: 8px;
-  border-radius: 4px;
+.scheduled-specialty {
+  padding: 4px 2px;
+  border-radius: 3px;
   color: white;
   font-weight: bold;
   text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   word-wrap: break-word;
+  position: relative;
+  white-space: nowrap;
+  overflow: visible;
+  box-sizing: border-box;
 }
 
-.scheduled-team:hover {
-  opacity: 0.8;
-}
-
-.span-start-cell {
-  border-right: none;
+.scheduled-specialty:hover {
+  opacity: 0.85;
 }
 
 .span-continuation-cell {
+  padding: 0;
   border-left: none;
-}
-
-.span-start-cell .scheduled-team {
-  border-radius: 4px 0 0 4px;
-}
-
-.span-continuation .scheduled-team,
-.span-continuation {
-  border-radius: 0 4px 4px 0;
-  min-height: 32px;
 }
 
 .before-arrival {
@@ -937,29 +969,42 @@ button:disabled {
   background-color: #fff3cd;
 }
 
-.double-booked-team {
+.double-booked-entry {
   outline: 3px solid red;
   outline-offset: -2px;
 }
 
-.duplicate-team {
+.duplicate-entry {
   outline: 3px solid orange;
   outline-offset: -2px;
 }
 
-.scheduled-team {
-  position: relative;
+.before-arrival-entry {
+  outline: 3px solid #ffc107;
+  outline-offset: -2px;
+  filter: brightness(0.9);
+}
+
+.warning-icon {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  font-size: 10px;
+  color: #ffc107;
+  line-height: 1;
+  z-index: 3;
+  text-shadow: 0px 0px 2px rgba(0,0,0,0.8);
 }
 
 .pin-btn {
   position: absolute;
   top: 1px;
-  right: 2px;
-  font-size: 10px;
+  right: 1px;
+  font-size: 8px;
   cursor: pointer;
   opacity: 0.3;
   line-height: 1;
-  z-index: 1;
+  z-index: 3;
 }
 
 .pin-btn:hover {
@@ -970,12 +1015,11 @@ button:disabled {
   opacity: 1;
 }
 
-.pinned-team {
+.pinned-entry {
   outline: 2px dashed rgba(255,255,255,0.7);
   outline-offset: -3px;
   cursor: default;
 }
-
 
 .modal-overlay {
   position: fixed;
@@ -1093,7 +1137,7 @@ button:disabled {
 
 @media print {
   .toolbar,
-  .team-palette {
+  .specialty-palette {
     display: none;
   }
 
@@ -1105,7 +1149,7 @@ button:disabled {
     overflow: visible;
   }
 
-  .scheduled-team,
+  .scheduled-specialty,
   .schedule-grid th,
   .patient-cell,
   .before-arrival,
