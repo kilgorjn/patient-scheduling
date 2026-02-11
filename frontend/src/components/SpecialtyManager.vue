@@ -8,10 +8,22 @@
         placeholder="Specialty name (e.g., MD, OT)"
         @keyup.enter="addSpecialty"
       />
-      <input
-        v-model="newSpecialty.color"
-        type="color"
-      />
+      <div class="color-swatch-container">
+        <div
+          class="color-swatch selected"
+          :style="{ backgroundColor: newSpecialty.color }"
+          @click="showColorPicker = 'new'"
+          title="Click to change color">&#x1F3A8;</div>
+        <div v-if="showColorPicker === 'new'" class="color-palette-popup">
+          <div
+            v-for="color in colorPalette"
+            :key="color"
+            class="palette-color"
+            :style="{ backgroundColor: color }"
+            @click="newSpecialty.color = color; showColorPicker = null">
+          </div>
+        </div>
+      </div>
       <select v-model="newSpecialty.duration">
         <option :value="15">15 min</option>
         <option :value="30">30 min</option>
@@ -34,14 +46,22 @@
             <span class="reorder-handle" title="Drag to reorder priority">&#x2630;</span>
             <span class="priority-badge">{{ index }}</span>
             <span class="specialty-name">{{ specialty.name }}</span>
-            <input
-              type="color"
-              :value="specialty.color"
-              @input="updateField(specialty, 'color', $event.target.value)"
-              class="color-picker"
-              @click.stop
-              title="Change color"
-            />
+            <div class="color-swatch-container">
+              <div
+                class="color-swatch"
+                :style="{ backgroundColor: specialty.color }"
+                @click.stop="showColorPicker = showColorPicker === specialty.id ? null : specialty.id"
+                title="Click to change color">&#x1F3A8;</div>
+              <div v-if="showColorPicker === specialty.id" class="color-palette-popup">
+                <div
+                  v-for="color in colorPalette"
+                  :key="color"
+                  class="palette-color"
+                  :style="{ backgroundColor: color }"
+                  @click.stop="updateField(specialty, 'color', color); showColorPicker = null">
+                </div>
+              </div>
+            </div>
             <select
               :value="specialty.duration || 30"
               @change="updateField(specialty, 'duration', parseInt($event.target.value))"
@@ -85,6 +105,28 @@ export default {
       color: '#4CAF50',
       duration: 30
     })
+
+    // Preset color palette (16 colors)
+    const colorPalette = [
+      '#f44336', // Red
+      '#e91e63', // Pink
+      '#9c27b0', // Purple
+      '#673ab7', // Deep Purple
+      '#3f51b5', // Indigo
+      '#2196f3', // Blue
+      '#00bcd4', // Cyan
+      '#009688', // Teal
+      '#4caf50', // Green
+      '#689f38', // Light Green
+      '#ff9800', // Orange
+      '#ff5722', // Deep Orange
+      '#795548', // Brown
+      '#607d8b', // Blue Grey
+      '#9e9e9e', // Grey
+      '#424242'  // Dark Grey
+    ]
+
+    const showColorPicker = ref(null) // Track which specialty is showing color picker
 
     const loadSpecialties = async () => {
       try {
@@ -159,6 +201,8 @@ export default {
     return {
       specialties,
       newSpecialty,
+      colorPalette,
+      showColorPicker,
       addSpecialty,
       updateField,
       onReorder,
@@ -180,17 +224,64 @@ export default {
   flex: 1;
 }
 
-.form input[type="color"] {
-  width: 50px;
-  height: 36px;
-  border: 2px solid #ddd;
-  border-radius: 4px;
-  cursor: pointer;
-  padding: 2px;
+.color-swatch-container {
+  position: relative;
 }
 
-.form input[type="color"]:hover {
+.color-swatch {
+  width: 36px;
+  height: 36px;
+  border: 2px solid rgba(255,255,255,0.5);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  filter: drop-shadow(0 0 1px rgba(0,0,0,0.5));
+}
+
+.color-swatch:hover {
+  border-color: rgba(255,255,255,0.9);
+  transform: scale(1.1);
+}
+
+.color-swatch.selected {
+  border: 3px solid #ddd;
+}
+
+.color-swatch.selected:hover {
   border-color: #4CAF50;
+}
+
+.color-palette-popup {
+  position: absolute;
+  top: 42px;
+  left: 0;
+  background: white;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 100;
+}
+
+.palette-color {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.15s;
+}
+
+.palette-color:hover {
+  transform: scale(1.15);
+  border-color: #333;
 }
 
 .form select {
@@ -238,20 +329,6 @@ export default {
   font-weight: bold;
   font-size: 16px;
   flex: 1;
-}
-
-.color-picker {
-  width: 32px;
-  height: 24px;
-  border: 2px solid rgba(255,255,255,0.5);
-  border-radius: 4px;
-  cursor: pointer;
-  padding: 0;
-  background: none;
-}
-
-.color-picker:hover {
-  border-color: rgba(255,255,255,0.8);
 }
 
 .duration-select {
