@@ -80,7 +80,7 @@
               <th
                 v-for="timeSlot in timeSlots"
                 :key="timeSlot"
-                class="time-header">
+                :class="['time-header', { 'print-hide': !shouldShowInPrint(timeSlot) }]">
                 {{ timeSlot }}
               </th>
               <th class="actions-header"></th>
@@ -109,7 +109,8 @@
                 :class="{
                   'double-booked-cell': isDoubleBooked(patient.name, timeSlot),
                   'span-continuation-cell': getEntryForSlot(patient.name, timeSlot)?.spanContinuation,
-                  'before-arrival': isBeforeArrival(patient, timeSlot)
+                  'before-arrival': isBeforeArrival(patient, timeSlot),
+                  'print-hide': !shouldShowInPrint(timeSlot)
                 }"
                 @dragover="onDragOver($event, patient, timeSlot)"
                 @drop="onDrop($event, patient.name, timeSlot, patient)">
@@ -729,6 +730,38 @@ export default {
       }
     }
 
+    // Calculate last appointment time for print optimization
+    const getLastAppointmentSlot = () => {
+      let maxSlotIndex = -1
+
+      for (const [key, entry] of Object.entries(schedule.value)) {
+        if (entry.spanContinuation) continue
+        const lastDash = key.lastIndexOf('-')
+        const timeSlot = key.substring(lastDash + 1)
+        const slotIndex = timeSlots.value.indexOf(timeSlot)
+
+        if (slotIndex >= 0) {
+          // Find the specialty to get duration
+          const spec = specialties.value.find(s => s.id === entry.specialty_id)
+          const numSlots = spec ? Math.max(1, Math.round((spec.duration || 30) / 15)) : 2
+          const endSlotIndex = slotIndex + numSlots
+          maxSlotIndex = Math.max(maxSlotIndex, endSlotIndex)
+        }
+      }
+
+      // Add 30-minute buffer (2 slots of 15 minutes each)
+      const bufferSlots = 2
+      const printCutoff = maxSlotIndex + bufferSlots
+
+      return printCutoff < timeSlots.value.length ? printCutoff : timeSlots.value.length
+    }
+
+    const shouldShowInPrint = (timeSlot) => {
+      const slotIndex = timeSlots.value.indexOf(timeSlot)
+      const cutoff = getLastAppointmentSlot()
+      return slotIndex < cutoff
+    }
+
     const printSchedule = () => {
       window.print()
     }
@@ -818,6 +851,7 @@ export default {
       getSpecialtyStyle,
       saveSchedule,
       printSchedule,
+      shouldShowInPrint,
       showLoadModal,
       savedSchedules,
       openLoadModal,
@@ -1333,7 +1367,8 @@ button:disabled {
   .toolbar,
   .specialty-palette,
   .actions-header,
-  .actions-cell {
+  .actions-cell,
+  .print-hide {
     display: none;
   }
 
@@ -1348,47 +1383,50 @@ button:disabled {
   }
 
   .schedule-grid {
-    table-layout: auto;
+    table-layout: fixed;
     width: 100%;
-    font-size: 10px;
+    font-size: 8px;
   }
 
   .schedule-grid th,
   .schedule-grid td {
-    padding: 2px 1px;
+    padding: 1px 0px;
     border: 1px solid #999;
   }
 
-  /* Time headers - vertical text for narrow columns */
+  /* Time headers - ultra-narrow vertical text */
   .time-header {
-    font-size: 9px;
+    font-size: 7px;
     writing-mode: vertical-rl;
     text-orientation: mixed;
-    min-width: 24px;
-    max-width: 24px;
-    padding: 2px 1px;
+    min-width: 16px !important;
+    max-width: 16px !important;
+    width: 16px !important;
+    padding: 1px 0px;
   }
 
-  /* Patient column */
+  /* Patient column - narrower */
   .patient-header,
   .patient-cell {
-    min-width: 100px;
-    max-width: 100px;
-    font-size: 10px;
+    min-width: 65px !important;
+    max-width: 65px !important;
+    width: 65px !important;
+    font-size: 8px;
   }
 
   .patient-input,
   .arrival-select {
-    font-size: 9px;
-    padding: 1px;
+    font-size: 7px;
+    padding: 0px;
   }
 
-  /* Specialty badges */
+  /* Specialty badges - smaller */
   .scheduled-specialty {
-    font-size: 8px;
-    padding: 2px 1px;
+    font-size: 6px;
+    padding: 1px 0px;
     white-space: normal;
     word-break: break-word;
+    line-height: 1.1;
   }
 
   /* Preserve colors */
@@ -1401,10 +1439,10 @@ button:disabled {
     -webkit-print-color-adjust: exact;
   }
 
-  /* Page settings */
+  /* Page settings - narrower margins */
   @page {
     size: landscape;
-    margin: 0.4in;
+    margin: 0.2in;
   }
 
   tbody tr {
