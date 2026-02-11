@@ -5,6 +5,7 @@ services:
     # Pull pre-built image from GitHub Container Registry
     # Replace <your-username> with your GitHub username
     image: ghcr.io/kilgorjn/patient-scheduling:latest
+    container_name: patient-scheduling
 
     ports:
       # HOST_PORT:CONTAINER_PORT - Change 8090 to any available port
