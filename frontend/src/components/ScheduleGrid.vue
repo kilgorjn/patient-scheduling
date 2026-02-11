@@ -107,36 +107,36 @@
                 :key="timeSlot"
                 class="schedule-cell"
                 :class="{
-                  'double-booked-cell': isDoubleBooked(patient.name, timeSlot),
-                  'span-continuation-cell': getEntryForSlot(patient.name, timeSlot)?.spanContinuation,
+                  'double-booked-cell': isDoubleBooked(patient.id, timeSlot),
+                  'span-continuation-cell': getEntryForSlot(patient.id, timeSlot)?.spanContinuation,
                   'before-arrival': isBeforeArrival(patient, timeSlot),
                   'print-hide': !shouldShowInPrint(timeSlot)
                 }"
                 @dragover="onDragOver($event, patient, timeSlot)"
-                @drop="onDrop($event, patient.name, timeSlot, patient)">
+                @drop="onDrop($event, patient.id, timeSlot, patient)">
                 <div
-                  v-if="getEntryForSlot(patient.name, timeSlot) && !getEntryForSlot(patient.name, timeSlot).spanContinuation"
+                  v-if="getEntryForSlot(patient.id, timeSlot) && !getEntryForSlot(patient.id, timeSlot).spanContinuation"
                   class="scheduled-specialty"
                   :class="{
-                    'double-booked-entry': isDoubleBooked(patient.name, timeSlot),
-                    'duplicate-entry': isDuplicateSpecialty(patient.name, timeSlot),
-                    'pinned-entry': getEntryForSlot(patient.name, timeSlot)?.pinned,
-                    'before-arrival-entry': isEntryBeforeArrival(patient.name, timeSlot)
+                    'double-booked-entry': isDoubleBooked(patient.id, timeSlot),
+                    'duplicate-entry': isDuplicateSpecialty(patient.id, timeSlot),
+                    'pinned-entry': getEntryForSlot(patient.id, timeSlot)?.pinned,
+                    'before-arrival-entry': isEntryBeforeArrival(patient.id, timeSlot)
                   }"
-                  :style="getSpecialtyStyle(patient.name, timeSlot)"
-                  :draggable="!getEntryForSlot(patient.name, timeSlot)?.pinned"
-                  @dragstart="onGridDragStart($event, patient.name, timeSlot)"
-                  @dblclick="removeEntry(patient.name, timeSlot)">
+                  :style="getSpecialtyStyle(patient.id, timeSlot)"
+                  :draggable="!getEntryForSlot(patient.id, timeSlot)?.pinned"
+                  @dragstart="onGridDragStart($event, patient.id, timeSlot)"
+                  @dblclick="removeEntry(patient.id, timeSlot)">
                   <span
-                    v-if="isEntryBeforeArrival(patient.name, timeSlot)"
+                    v-if="isEntryBeforeArrival(patient.id, timeSlot)"
                     class="warning-icon"
                     title="Scheduled before patient arrival">&#x26A0;</span>
                   <span
                     class="pin-btn"
-                    :class="{ 'is-pinned': getEntryForSlot(patient.name, timeSlot)?.pinned }"
-                    @click.stop="togglePin(patient.name, timeSlot)"
-                    :title="getEntryForSlot(patient.name, timeSlot)?.pinned ? 'Unpin' : 'Pin'">&#x1F4CC;</span>
-                  {{ getEntryForSlot(patient.name, timeSlot).name }}
+                    :class="{ 'is-pinned': getEntryForSlot(patient.id, timeSlot)?.pinned }"
+                    @click.stop="togglePin(patient.id, timeSlot)"
+                    :title="getEntryForSlot(patient.id, timeSlot)?.pinned ? 'Unpin' : 'Pin'">&#x1F4CC;</span>
+                  {{ getEntryForSlot(patient.id, timeSlot).name }}
                 </div>
               </td>
               <td class="actions-cell">
@@ -201,8 +201,10 @@ export default {
     const specialties = ref([])
     // Default to Patient 1, Patient 2, ...
     const defaultPatientCount = 5
+    let nextPatientId = 1
     const patients = ref(
       Array.from({ length: defaultPatientCount }, (_, i) => ({
+        id: nextPatientId++,
         name: `Patient ${i + 1}`,
         arrivalTime: '8:00'
       }))
@@ -312,8 +314,8 @@ export default {
       return slotIdx < arrivalIdx
     }
 
-    const isEntryBeforeArrival = (patientName, timeSlot) => {
-      const patient = patients.value.find(p => p.name === patientName)
+    const isEntryBeforeArrival = (patientId, timeSlot) => {
+      const patient = patients.value.find(p => p.id === patientId)
       if (!patient) return false
       return isBeforeArrival(patient, timeSlot)
     }
@@ -325,7 +327,7 @@ export default {
     }
 
     const addPatient = () => {
-      patients.value.push({ name: '', arrivalTime: '8:00' })
+      patients.value.push({ id: nextPatientId++, name: '', arrivalTime: '8:00' })
     }
 
     const deletePatient = (index, patientName) => {
@@ -336,13 +338,13 @@ export default {
 
       const patient = patients.value[index]
 
-      // Remove all schedule entries for this patient
+      // Remove all schedule entries for this patient (by ID)
       const newSchedule = {}
       for (const [key, entry] of Object.entries(schedule.value)) {
         const lastDash = key.lastIndexOf('-')
-        const keyPatientName = key.substring(0, lastDash)
+        const keyPatientId = parseInt(key.substring(0, lastDash))
 
-        if (keyPatientName !== patient.name) {
+        if (keyPatientId !== patient.id) {
           newSchedule[key] = entry
         }
       }
@@ -374,8 +376,8 @@ export default {
       event.dataTransfer.effectAllowed = 'copy'
     }
 
-    const onGridDragStart = (event, patientName, timeSlot) => {
-      const key = `${patientName}-${timeSlot}`
+    const onGridDragStart = (event, patientId, timeSlot) => {
+      const key = `${patientId}-${timeSlot}`
       const entry = schedule.value[key]
 
       // Block drag on pinned entries
@@ -397,7 +399,7 @@ export default {
       if (!entry) return
 
       const lastDash = key.lastIndexOf('-')
-      const patientName = key.substring(0, lastDash)
+      const patientId = key.substring(0, lastDash)
       const startSlot = key.substring(lastDash + 1)
 
       // Find the specialty to know how many slots to clear
@@ -407,7 +409,7 @@ export default {
       const slots = getConsecutiveSlots(startSlot, numSlots)
       if (slots) {
         for (const slot of slots) {
-          delete schedule.value[`${patientName}-${slot}`]
+          delete schedule.value[`${patientId}-${slot}`]
         }
       } else {
         // Fallback: just delete the one slot
@@ -415,7 +417,7 @@ export default {
       }
     }
 
-    const onDrop = (event, patientName, timeSlot, patient) => {
+    const onDrop = (event, patientId, timeSlot, patient) => {
       if (!draggedSpecialty.value) return
 
       // Block drops on before-arrival cells
@@ -438,7 +440,7 @@ export default {
 
       // Block drops onto pinned entries
       for (const slot of slots) {
-        const existingKey = `${patientName}-${slot}`
+        const existingKey = `${patientId}-${slot}`
         const existing = schedule.value[existingKey]
         if (existing && existing.pinned) {
           draggedSpecialty.value = null
@@ -457,19 +459,19 @@ export default {
 
       // Clear any existing entries in the target slots
       for (const slot of slots) {
-        const existingKey = `${patientName}-${slot}`
+        const existingKey = `${patientId}-${slot}`
         const existing = schedule.value[existingKey]
         if (existing && !existing.spanContinuation) {
           clearEntrySlots(existingKey)
         } else if (existing && existing.spanContinuation) {
           // Clear the parent span start too
-          const parentKey = `${patientName}-${existing.spanStartSlot}`
+          const parentKey = `${patientId}-${existing.spanStartSlot}`
           clearEntrySlots(parentKey)
         }
       }
 
       // Place the specialty (pinned if dragged from palette, unpinned if moved within grid)
-      const startKey = `${patientName}-${slots[0]}`
+      const startKey = `${patientId}-${slots[0]}`
       schedule.value[startKey] = {
         specialty_id: spec.id,
         name: spec.name,
@@ -481,7 +483,7 @@ export default {
 
       // Place continuation cells for multi-slot specialties
       for (let i = 1; i < numSlots; i++) {
-        const contKey = `${patientName}-${slots[i]}`
+        const contKey = `${patientId}-${slots[i]}`
         schedule.value[contKey] = {
           specialty_id: spec.id,
           name: spec.name,
@@ -497,20 +499,20 @@ export default {
       dragSourceKey.value = null
     }
 
-    const getEntryForSlot = (patientName, timeSlot) => {
-      return schedule.value[`${patientName}-${timeSlot}`]
+    const getEntryForSlot = (patientId, timeSlot) => {
+      return schedule.value[`${patientId}-${timeSlot}`]
     }
 
-    const removeEntry = (patientName, timeSlot) => {
-      const key = `${patientName}-${timeSlot}`
+    const removeEntry = (patientId, timeSlot) => {
+      const key = `${patientId}-${timeSlot}`
       const entry = schedule.value[key]
       if (!entry) return
       if (entry.pinned) return
       clearEntrySlots(key)
     }
 
-    const togglePin = (patientName, timeSlot) => {
-      const key = `${patientName}-${timeSlot}`
+    const togglePin = (patientId, timeSlot) => {
+      const key = `${patientId}-${timeSlot}`
       const entry = schedule.value[key]
       if (!entry) return
 
@@ -523,7 +525,7 @@ export default {
       const slots = getConsecutiveSlots(timeSlot, numSlots)
       if (slots) {
         for (let i = 1; i < slots.length; i++) {
-          const contEntry = schedule.value[`${patientName}-${slots[i]}`]
+          const contEntry = schedule.value[`${patientId}-${slots[i]}`]
           if (contEntry) {
             contEntry.pinned = newPinned
           }
@@ -537,7 +539,7 @@ export default {
       for (const timeSlot of timeSlots.value) {
         const specsAtTime = []
         for (const patient of patients.value) {
-          const key = `${patient.name}-${timeSlot}`
+          const key = `${patient.id}-${timeSlot}`
           const entry = schedule.value[key]
           if (entry) {
             specsAtTime.push({ key, specId: entry.specialty_id })
@@ -557,8 +559,8 @@ export default {
       return conflicts
     })
 
-    const isDoubleBooked = (patientName, timeSlot) => {
-      return doubleBookedSlots.value.has(`${patientName}-${timeSlot}`)
+    const isDoubleBooked = (patientId, timeSlot) => {
+      return doubleBookedSlots.value.has(`${patientId}-${timeSlot}`)
     }
 
     // Detect duplicate specialties: same specialty scheduled more than once for the same patient
@@ -567,7 +569,7 @@ export default {
       for (const patient of patients.value) {
         const specEntries = []
         for (const timeSlot of timeSlots.value) {
-          const key = `${patient.name}-${timeSlot}`
+          const key = `${patient.id}-${timeSlot}`
           const entry = schedule.value[key]
           if (entry && !entry.spanContinuation) {
             specEntries.push({ key, specId: entry.specialty_id })
@@ -587,12 +589,12 @@ export default {
       return duplicates
     })
 
-    const isDuplicateSpecialty = (patientName, timeSlot) => {
-      return duplicateSpecialtySlots.value.has(`${patientName}-${timeSlot}`)
+    const isDuplicateSpecialty = (patientId, timeSlot) => {
+      return duplicateSpecialtySlots.value.has(`${patientId}-${timeSlot}`)
     }
 
-    const getSpecialtyStyle = (patientName, timeSlot) => {
-      const entry = getEntryForSlot(patientName, timeSlot)
+    const getSpecialtyStyle = (patientId, timeSlot) => {
+      const entry = getEntryForSlot(patientId, timeSlot)
       if (!entry) return {}
 
       const spec = specialties.value.find(s => s.id === entry.specialty_id)
@@ -618,7 +620,11 @@ export default {
     const reconstructScheduleFromSlots = (slots) => {
       const newSchedule = {}
       for (const slot of slots) {
-        const key = `${slot.patient_name}-${slot.time_slot}`
+        // Convert patient_name to patient_id for schedule keys
+        const patient = patients.value.find(p => p.name === slot.patient_name)
+        if (!patient) continue
+
+        const key = `${patient.id}-${slot.time_slot}`
         const pinned = !!slot.pinned
 
         const spec = specialties.value.find(s => s.id === slot.specialty_id)
@@ -642,7 +648,7 @@ export default {
         }
 
         for (let i = 1; i < consecutiveSlots.length; i++) {
-          const contKey = `${slot.patient_name}-${consecutiveSlots[i]}`
+          const contKey = `${patient.id}-${consecutiveSlots[i]}`
           newSchedule[contKey] = {
             specialty_id: spec.id,
             name: spec.name,
@@ -669,11 +675,15 @@ export default {
           if (entry.spanContinuation) continue
 
           const lastDash = key.lastIndexOf('-')
-          const patientName = key.substring(0, lastDash)
+          const patientId = parseInt(key.substring(0, lastDash))
           const timeSlot = key.substring(lastDash + 1)
 
+          // Find patient name for API
+          const patient = patients.value.find(p => p.id === patientId)
+          if (!patient) continue
+
           pinnedSlots.push({
-            patient_name: patientName,
+            patient_name: patient.name,
             time_slot: timeSlot,
             specialty_id: entry.specialty_id,
           })
@@ -735,10 +745,15 @@ export default {
         for (const [key, entry] of Object.entries(schedule.value)) {
           if (entry.spanContinuation) continue
           const lastDash = key.lastIndexOf('-')
-          const patientName = key.substring(0, lastDash)
+          const patientId = parseInt(key.substring(0, lastDash))
           const timeSlot = key.substring(lastDash + 1)
+
+          // Find patient name for saving
+          const patient = patients.value.find(p => p.id === patientId)
+          if (!patient) continue
+
           slots.push({
-            patient_name: patientName,
+            patient_name: patient.name,
             time_slot: timeSlot,
             specialty_id: entry.specialty_id,
             pinned: !!entry.pinned,
@@ -808,10 +823,10 @@ export default {
         if (entry.spanContinuation) continue
 
         const lastDash = key.lastIndexOf('-')
-        const patientName = key.substring(0, lastDash)
+        const patientId = parseInt(key.substring(0, lastDash))
         const timeSlot = key.substring(lastDash + 1)
 
-        if (patientName === patient.name) {
+        if (patientId === patient.id) {
           const specialty = specialties.value.find(s => s.id === entry.specialty_id)
           if (specialty) {
             appointments.push({
@@ -856,15 +871,20 @@ export default {
         const response = await axios.get(`/api/schedules/${id}`)
         const saved = response.data
 
-        // Restore patients
+        // Restore patients with new IDs
         if (saved.patients && saved.patients.length > 0) {
           patients.value = saved.patients.map(p => ({
+            id: nextPatientId++,
             name: p.name,
             arrivalTime: p.arrival_time
           }))
         } else {
           const names = [...new Set(saved.slots.map(s => s.patient_name))]
-          patients.value = names.map(name => ({ name, arrivalTime: '8:00' }))
+          patients.value = names.map(name => ({
+            id: nextPatientId++,
+            name,
+            arrivalTime: '8:00'
+          }))
         }
 
         schedule.value = reconstructScheduleFromSlots(saved.slots)
