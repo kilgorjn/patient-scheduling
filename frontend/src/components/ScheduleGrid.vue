@@ -64,7 +64,7 @@
               <span
                 class="palette-auto-indicator"
                 :class="{ 'auto-off': spec.auto_schedule === false }"
-                title="Auto-schedule">&#x2699;</span>
+                :title="spec.auto_schedule !== false ? 'Auto-schedule: ON' : 'Auto-schedule: OFF'">&#x2699;</span>
             </div>
           </div>
         </div>
