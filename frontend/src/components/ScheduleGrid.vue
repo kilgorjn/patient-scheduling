@@ -141,6 +141,12 @@
               </td>
               <td class="actions-cell">
                 <button
+                  @click="printPatientChecklist(patient)"
+                  class="print-patient-btn"
+                  title="Print patient checklist">
+                  &#x1F4C4;
+                </button>
+                <button
                   @click="deletePatient(rowIndex, patient.name)"
                   class="delete-patient-btn"
                   title="Delete patient">
@@ -152,6 +158,32 @@
         </table>
         </div>
       </div>
+    </div>
+
+    <!-- Patient Checklist for Printing (hidden by default) -->
+    <div class="patient-checklist" v-if="checklistPatient">
+      <div class="checklist-header">
+        <h2>{{ checklistPatient.name }}</h2>
+        <p class="date-info">Date: _________________</p>
+      </div>
+      <table class="checklist-table">
+        <thead>
+          <tr>
+            <th class="checkbox-col">Done</th>
+            <th class="time-col">Time</th>
+            <th class="specialty-col">Appointment</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(item, index) in checklistItems" :key="index">
+            <td class="checkbox-col">
+              <div class="checkbox-box">☐</div>
+            </td>
+            <td class="time-col">{{ item.time }}</td>
+            <td class="specialty-col">{{ item.specialty }}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </template>
@@ -249,6 +281,8 @@ export default {
     const savedSchedules = ref([])
     const isAutoScheduling = ref(false)
     const autoScheduleError = ref('')
+    const checklistPatient = ref(null)
+    const checklistItems = ref([])
 
     const loadSpecialties = async () => {
       try {
@@ -766,6 +800,47 @@ export default {
       window.print()
     }
 
+    const printPatientChecklist = (patient) => {
+      // Get all appointments for this patient
+      const appointments = []
+
+      for (const [key, entry] of Object.entries(schedule.value)) {
+        if (entry.spanContinuation) continue
+
+        const lastDash = key.lastIndexOf('-')
+        const patientName = key.substring(0, lastDash)
+        const timeSlot = key.substring(lastDash + 1)
+
+        if (patientName === patient.name) {
+          const specialty = specialties.value.find(s => s.id === entry.specialty_id)
+          if (specialty) {
+            appointments.push({
+              time: timeSlot,
+              specialty: specialty.name,
+              timeIndex: timeSlots.value.indexOf(timeSlot)
+            })
+          }
+        }
+      }
+
+      // Sort by time
+      appointments.sort((a, b) => a.timeIndex - b.timeIndex)
+
+      // Set checklist data
+      checklistPatient.value = patient
+      checklistItems.value = appointments
+
+      // Wait for DOM update, then print
+      setTimeout(() => {
+        window.print()
+        // Clear checklist after printing
+        setTimeout(() => {
+          checklistPatient.value = null
+          checklistItems.value = []
+        }, 100)
+      }, 100)
+    }
+
     const openLoadModal = async () => {
       try {
         const response = await axios.get('/api/schedules')
@@ -851,7 +926,10 @@ export default {
       getSpecialtyStyle,
       saveSchedule,
       printSchedule,
+      printPatientChecklist,
       shouldShowInPrint,
+      checklistPatient,
+      checklistItems,
       showLoadModal,
       savedSchedules,
       openLoadModal,
@@ -1135,6 +1213,29 @@ button:disabled {
   width: 40px !important;
 }
 
+.print-patient-btn {
+  background: #2196F3;
+  border: none;
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  color: white;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.8;
+  margin-bottom: 4px;
+}
+
+.print-patient-btn:hover {
+  opacity: 1;
+  background: #1976D2;
+}
+
 .delete-patient-btn {
   background: #f44336;
   border: none;
@@ -1363,7 +1464,84 @@ button:disabled {
   background: #cc0000;
 }
 
+/* Patient Checklist Styles */
+.patient-checklist {
+  display: none; /* Hidden by default in screen view */
+}
+
+.checklist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.checklist-header h2 {
+  font-size: 18px;
+  margin: 0;
+  color: #4CAF50;
+  font-weight: bold;
+}
+
+.date-info {
+  font-size: 12px;
+  color: #333;
+  margin: 0;
+  font-weight: normal;
+}
+
+.checklist-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0;
+}
+
+.checklist-table thead th {
+  background-color: #4CAF50;
+  color: white;
+  padding: 8px;
+  text-align: left;
+  border: 1px solid #333;
+  font-size: 13px;
+}
+
+.checklist-table tbody tr {
+  border-bottom: 1px solid #ddd;
+}
+
+.checklist-table tbody tr:hover {
+  background-color: #f5f5f5;
+}
+
+.checklist-table tbody td {
+  padding: 8px;
+  border: 1px solid #ddd;
+  font-size: 12px;
+}
+
+.checkbox-col {
+  width: 50px;
+  text-align: center;
+}
+
+.checkbox-box {
+  font-size: 24px;
+  line-height: 1;
+  color: #333;
+}
+
+.time-col {
+  width: 80px;
+  font-weight: bold;
+  color: #333;
+}
+
+.specialty-col {
+  color: #555;
+}
+
 @media print {
+  /* Default: Hide UI elements for main schedule printing */
   .toolbar,
   .specialty-palette,
   .actions-header,
@@ -1447,6 +1625,74 @@ button:disabled {
 
   tbody tr {
     page-break-inside: avoid;
+  }
+
+  /* Patient Checklist Print Styles */
+  /* Position checklist to cover entire page */
+  .patient-checklist {
+    display: block !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: white !important;
+    z-index: 999999 !important;
+    padding: 0.3in !important;
+    margin: 0 !important;
+  }
+
+  /* Checklist print formatting */
+  .checklist-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  .checklist-header h2 {
+    font-size: 16px;
+    margin: 0;
+  }
+
+  .date-info {
+    font-size: 11px;
+    margin: 0;
+  }
+
+  .checklist-table {
+    width: 100%;
+    page-break-inside: avoid;
+  }
+
+  .checklist-table thead th {
+    background-color: #4CAF50 !important;
+    color: white !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+
+  .checklist-table tbody td {
+    font-size: 11px;
+    padding: 6px 8px;
+    border: 1px solid #333;
+  }
+
+  .checkbox-box {
+    font-size: 20px;
+    font-weight: bold;
+  }
+
+  /* Portrait orientation for patient checklist */
+  body:has(.patient-checklist) {
+    @page {
+      size: portrait;
+      margin: 0.3in;
+    }
   }
 }
 </style>
